@@ -1,59 +1,47 @@
-from groq import Groq
-from app.config import get_settings
+"""Groq LLM service for TaskFlow - using direct HTTP."""
 import logging
-import json
+import httpx
+from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+_base_url = "https://api.groq.com/openai/v1"
 
-class GroqService:
-    """Wrapper for Groq API (LLM)"""
+
+async def complete(
+    messages: list[dict],
+    temperature: float = 0.7,
+    max_tokens: int = 1024,
+) -> str:
+    """Send a chat completion request to Groq."""
+    settings = get_settings()
     
-    _instance = None
+    if not settings.groq_api_key:
+        raise ValueError("GROQ_API_KEY not configured")
     
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super(GroqService, cls).__new__(cls)
-        return cls._instance
+    headers = {
+        "Authorization": f"Bearer {settings.groq_api_key}",
+        "Content-Type": "application/json",
+    }
     
-    def __init__(self):
-        if not hasattr(self, 'client'):
-            settings = get_settings()
-            self.client = Groq(api_key=settings.groq_api_key)
-            logger.info("Groq client initialized")
+    payload = {
+        "model": settings.groq_model or "llama-3.3-70b-versatile",
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
     
-    def analyze_task(self, task_title: str, task_description: str) -> dict:
-        """Analyze task and provide AI insights"""
+    async with httpx.AsyncClient() as client:
         try:
-            prompt = f"""Analyze this task and provide:
-1. Estimated time in hours
-2. Priority level (low/medium/high)
-3. Risk factors if any
-4. Suggested subtasks
-
-Task: {task_title}
-Description: {task_description}
-
-Provide response as JSON with keys: estimated_hours, priority, risks, subtasks"""
-            
-            message = self.client.chat.completions.create(
-                model="mixtral-8x7b-32768",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.7,
-                max_tokens=512
+            response = await client.post(
+                f"{_base_url}/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=30.0,
             )
-            
-            response_text = message.choices[0].message.content
-            json_start = response_text.find('{')
-            json_end = response_text.rfind('}') + 1
-            if json_start >= 0 and json_end > json_start:
-                return json.loads(response_text[json_start:json_end])
-            return {"error": "Could not parse response"}
+            response.raise_for_status()
+            data = response.json()
+            return data["choices"][0]["message"]["content"]
         except Exception as e:
-            logger.error(f"Error analyzing task: {e}")
-            return {"error": str(e)}
-
-
-def get_groq_service():
-    """Get Groq service singleton"""
-    return GroqService()
+            logger.error(f"Groq API error: {e}")
+            raise

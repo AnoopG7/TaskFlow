@@ -1,57 +1,91 @@
-from fastapi import FastAPI
+"""FastAPI application entry point."""
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import logging
 
 from app.config import get_settings
+from app.api.routes import tasks, agent
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifespan context manager for startup/shutdown"""
-    # Startup
-    logger.info("Application starting...")
+    """Startup: initialize services. Shutdown: cleanup."""
+    from app.services.supabase_service import init_supabase
+    
+    logger.info("🚀 TaskFlow starting up...")
+    init_supabase()
+    logger.info("✅ Supabase connected")
+    logger.info("✅ TaskFlow ready")
     yield
-    # Shutdown
-    logger.info("Application shutting down...")
+    logger.info("🛑 TaskFlow shutting down")
 
 
-# Create FastAPI app
+settings = get_settings()
+
 app = FastAPI(
-    title="Daily Planner Agent API",
-    description="AI-powered task management and productivity system",
-    version="1.0.0",
-    lifespan=lifespan
+    title="TaskFlow Agent",
+    description="AI-powered proactive task management",
+    version="0.1.0",
+    lifespan=lifespan,
 )
 
-# Add CORS middleware
-settings = get_settings()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=settings.get_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Routes
+app.include_router(tasks.router, prefix="/api/tasks", tags=["Tasks"])
+app.include_router(agent.router, prefix="/api/agent", tags=["Agent"])
 
-@app.get("/health")
+
+@app.post("/webhook/telegram")
+async def telegram_webhook(request: Request):
+    """Handle incoming Telegram updates."""
+    try:
+        body = await request.json()
+        from app.services.telegram_service import handle_webhook_update
+        
+        result = await handle_webhook_update(body)
+        
+        action = result.get("action")
+        
+        if action == "respond":
+            from app.services.telegram_service import send_message
+            await send_message(
+                chat_id=result["chat_id"],
+                text=result["message"],
+            )
+        
+        return JSONResponse({"status": "ok"})
+    
+    except Exception as e:
+        logger.error(f"Telegram webhook error: {e}")
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
+@app.get("/health", tags=["System"])
 async def health_check():
-    """Health check endpoint"""
-    return {"status": "healthy", "service": "Daily Planner Agent"}
+    return {"status": "healthy", "service": "TaskFlow Agent", "version": "0.1.0"}
 
 
-@app.get("/")
+@app.get("/", tags=["System"])
 async def root():
-    """Root endpoint"""
     return {
-        "service": "Daily Planner Agent API",
-        "version": "1.0.0",
-        "status": "running"
+        "service": "TaskFlow Agent",
+        "version": "0.1.0",
+        "docs": "/docs",
     }
 
 

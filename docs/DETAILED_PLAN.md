@@ -1,91 +1,126 @@
 # Daily Planner & To-Do Agent - Detailed Plan
 
 ## 1. Project Overview
-An intelligent task and project management system designed for busy professionals, particularly project managers and portfolio directors. The agent helps track daily tasks, provides proactive reminders, syncs with calendars, and sends intelligent notifications to ensure nothing falls through the cracks.
+A **Personal Chief of Staff Agent** for a single power user: a project manager or portfolio director who juggles many responsibilities and needs an AI that *proactively* manages their day — not one that waits to be asked. The agent observes task state, deadlines, and calendar context, then acts autonomously: sending morning briefings, flagging deadline risks, reprioritizing the task list, and keeping the user in control without cognitive overhead.
 
-**Target Users:** Project managers, portfolio directors, C-suite executives, busy professionals
-**Primary Goal:** Automated task tracking and intelligent reminders for busy professionals
+**Target Users:** Single user — a project manager, portfolio director, or senior professional
+**Primary Goal:** Autonomous daily task management with proactive intelligence — the agent thinks ahead so the user doesn't have to
+**Agent Type:** Stateful, event-driven agent with proactive triggers and persistent memory
+**Framework:** LangGraph (workflow state machine) + Groq LLM (Mixtral 8x7B)
+
+> **Scope discipline:** This is a single-user tool. Team collaboration, custom workflow builders, Gantt charts, and Jira integrations are **future enhancements** — not MVP.
 
 ---
 
-## 2. Core Features
+## 2. Agent Architecture
 
-### 2.1 Smart Task Management
+### 2.1 The Agent Loop — Proactive Triggers
+The agent doesn't just respond to the user. It fires on **scheduled triggers** and **real-time events**:
+
+```
+┌──────────────────────────────────┐
+│         PROACTIVE TRIGGERS          │
+└──────────────────────────────────┘
+        ↓                   ↓
+  Scheduled (Cron)    Event-Driven
+  ├─ 7:00 AM daily    ├─ New task added
+  ├─ End of day       ├─ Task marked done
+  └─ Weekly review    └─ Deadline < 24 hrs away
+        ↓
+OBSERVE
+  ├─ All tasks + priority + deadlines from DB
+  ├─ Google Calendar: today's meetings
+  └─ Agent memory: user patterns, past estimates
+        ↓
+THINK (Groq LLM via LangGraph)
+  ├─ What tasks are critical today?
+  ├─ Is anything at risk of being missed?
+  ├─ Does the user's calendar leave enough time?
+  └─ What's the single most important thing to do next?
+        ↓
+ACT (Tool Execution)
+  ├─ send_daily_brief()         → Morning Telegram/email summary
+  ├─ reprioritize_tasks()       → Reorder task list by urgency + importance
+  ├─ flag_at_risk_tasks()       → Identify tasks that won't make deadline
+  ├─ send_alert()               → Urgent notification via Telegram
+  └─ suggest_defer()            → Recommend tasks to push if overloaded
+        ↓
+REFLECT
+  ├─ Log what actions were taken
+  └─ Update agent_memory: patterns, estimation accuracy
+```
+
+### 2.2 Agent Tools (Function Calling)
+| Tool | Trigger | Output |
+|------|---------|--------|
+| `get_todays_tasks` | Any reasoning step | Filtered, prioritized task list |
+| `get_calendar_context` | Morning brief, conflict check | Today's meetings + free time blocks |
+| `reprioritize_tasks` | Morning brief, new task added | Reordered task list with reasoning |
+| `flag_at_risk_tasks` | Daily scan, deadline approaching | List of tasks likely to be missed |
+| `send_daily_brief` | 7 AM cron | Telegram/email morning summary |
+| `send_alert` | Deadline < 24h, high-risk detected | Urgent Telegram notification |
+| `suggest_defer` | Overload detected | Recommended tasks to push |
+| `log_agent_action` | After every act | Audit trail in DB |
+| `update_agent_memory` | End of day | Update user patterns, estimate accuracy |
+| `create_task` | User request via Telegram | New task created with AI-inferred priority |
+| `complete_task` | User request via Telegram | Mark done, update progress stats |
+
+### 2.3 Agent Memory Layers
+```
+Session Memory (per conversation)
+  └─ Last 10 messages with the user (Telegram/chat context)
+
+Medium-Term Memory (last 30 days, stored in DB)
+  ├─ Task completion rate by day of week ("Mondays are least productive")
+  ├─ Estimation accuracy ("tasks estimated at 2h actually take 3.5h")
+  └─ Most frequently missed deadline categories
+
+Long-Term Preferences (stable, rarely changes)
+  ├─ Work hours, DND preferences, notification channels
+  ├─ Priority weights (user values deadlines > importance)
+  └─ Calendar integration settings
+```
+
+### 2.4 Core Features (MVP)
+
+#### Smart Task Management
 - **Task Creation:** Add tasks with title, description, priority, due date
-- **Task Categorization:** Organize by projects, departments, priorities
-- **Subtasks:** Break down complex tasks into smaller steps
-- **Task Dependencies:** Set task relationships and prerequisites
+- **Task Categorization:** Organize by projects and priority levels
+- **AI Priority Inference:** Agent infers priority from task description if not set
+- **Subtasks:** Break down complex tasks into steps
+- **Task Dependencies:** Set which tasks block others
 - **Recurring Tasks:** Automate repetitive task creation
-- **Task History:** Track task lifecycle and time spent
-- **Bulk Operations:** Manage multiple tasks at once
-- **Custom Fields:** Add project-specific metadata
 
-### 2.2 Intelligent Reminders & Notifications
-- **Context-aware Reminders:** Smart timing based on user behavior
-- **Mobile Notifications:** Push alerts on phone/tablet
-- **Calendar Integration:** Email/calendar reminders
-- **Escalation System:** Increase urgency as deadlines approach
-- **Smart Snooze:** Defer reminders intelligently
-- **Notification Preferences:** Customize frequency and channels
-- **Do Not Disturb:** Respect focus time and meetings
-- **Summary Notifications:** Daily/weekly task summaries
+#### Proactive Intelligence (The Agent Difference)
+- **Morning Brief:** Agent sends personalized daily plan at 7 AM via Telegram
+- **Deadline Risk Detection:** Agent flags tasks likely to be missed before it's too late
+- **Overload Warning:** Agent notices when there's more work than available time
+- **Autonomous Reprioritization:** Agent reorders task list when context changes (new urgent task added, deadline moved)
+- **End-of-Day Debrief:** What got done, what didn't, why
 
-### 2.3 Calendar Integration
-- **Multi-calendar Sync:** Google Calendar, Outlook, Apple Calendar
-- **Meeting Awareness:** Understand calendar context
-- **Conflict Detection:** Alert when task deadlines conflict with meetings
-- **Block Time:** Auto-create calendar blocks for tasks
-- **Meeting Notes:** Capture action items from meetings
-- **Meeting Analytics:** Track time spent in meetings vs. work
-- **Calendar Analytics:** Show busiest days/times
+#### Calendar Integration (Google Calendar Only — MVP)
+- **Read-only sync:** Agent reads your calendar to understand available time
+- **Conflict Detection:** Alert when task deadline conflicts with a packed calendar day
+- **Time Block Awareness:** Agent knows you have 3 hours of meetings, so won't expect 8 hours of tasks
 
-### 2.4 Project Portfolio Management
-- **Multi-project Support:** Manage multiple projects simultaneously
-- **Portfolio View:** High-level overview of all projects
-- **Project Status:** Automatic status calculation
-- **Resource Allocation:** Track team member assignments
-- **Portfolio Analytics:** Rollup metrics and KPIs
-- **Dependency Tracking:** Cross-project task dependencies
-- **Critical Path:** Identify project bottlenecks
-- **Gantt Charts:** Visual project timeline
+> **Outlook / Apple Calendar:** Post-MVP. One OAuth flow for MVP.
 
-### 2.5 AI-Powered Insights & Recommendations
-- **Workload Analysis:** Assess task load and feasibility
-- **Priority Optimization:** AI suggests task prioritization
-- **Risk Detection:** Identify at-risk tasks/projects
-- **Bottleneck Analysis:** Find blocking tasks
-- **Capacity Planning:** Predict resource needs
-- **Effort Estimation:** AI-powered time estimates
-- **Smart Suggestions:** Suggest next actions
+#### Notifications (Telegram First)
+- **Telegram Bot:** Primary interface for quick task logging and receiving alerts
+- **Email (AWS SES):** Daily briefing digest, weekly review
+- **Notification preferences:** DND hours, urgency thresholds
 
-### 2.6 Collaboration & Delegation
-- **Team Assignment:** Assign tasks to team members
-- **Responsibility Tracking:** Clear ownership
-- **Approval Workflows:** Multi-step approval processes
-- **Comments & Notes:** Collaborate on tasks
-- **File Attachments:** Share documents and files
-- **Update Notifications:** Auto-notify stakeholders on changes
-- **Team Dashboards:** See team member progress
-- **Skill Matching:** Assign based on capabilities
+### 2.5 Future Features (Post-MVP, After 50+ Users)
+> These are deliberately deferred. Building them before the core agent is solid is scope creep.
 
-### 2.7 Analytics & Performance Tracking
-- **Task Completion Rate:** Track productivity metrics
-- **Average Time per Task:** Understand estimation accuracy
-- **Priority vs. Actual:** Analyze priority effectiveness
-- **Team Performance:** Benchmark team productivity
-- **Bottleneck Identification:** Find process inefficiencies
-- **Time Analytics:** Where time is actually spent
-- **Trend Analysis:** Identify patterns over time
-- **Custom Reports:** Generate executive reports
-
-### 2.8 Automated Workflow Management
-- **Workflow Automation:** Create custom workflows
-- **Triggers & Actions:** If-this-then-that automation
-- **Status Auto-update:** Automatic status progression
-- **Task Auto-generation:** Create tasks based on templates
-- **Integration Automations:** Connect with other tools
-- **Approval Chains:** Automated approval processes
-- **Escalation Rules:** Auto-escalate based on conditions
+- Team collaboration & task assignment
+- Custom workflow builder
+- Gantt charts & project timeline visualization
+- Jira / Asana / Slack integrations
+- Mobile app (web-first for MVP)
+- Portfolio-level analytics across multiple clients
+- Multi-calendar provider support (Outlook, Apple)
+- Approval chains & escalation workflows
 
 ---
 
@@ -93,71 +128,64 @@ An intelligent task and project management system designed for busy professional
 
 ### 3.1 System Architecture
 ```
-Web/Mobile Frontend (React + Vite on Vercel)
+Telegram Bot / Web Frontend (React + Vite)
         ↓
-API Gateway (Supabase Auth, WebSocket for real-time)
+API Gateway (Supabase Auth)
         ↓
-Backend API (FastAPI/Python on Render)
-    ├─ Task Service
-    ├─ Project Service
-    ├─ Notification Service (AWS SES + python-socketio)
-    ├─ AI Intelligence (Groq LLM)
-    ├─ Telegram Bot Handler
-    └─ Collaboration Service
+FastAPI Backend (Render)
+    ├─ LangGraph Agent (proactive reasoning loop)
+    ├─ Task Service (CRUD)
+    ├─ Calendar Service (Google Calendar OAuth)
+    ├─ Notification Service (AWS SES + Telegram Bot)
+    └─ Scheduler (APScheduler — cron triggers)
         ↓
-Supabase PostgreSQL (JSONB for flexibility)
+Supabase PostgreSQL
     ├─ Tasks & Projects
-    ├─ Task Dependencies & History
-    ├─ User Preferences
-    ├─ Team Assignments
-    ├─ Conversation History
-    └─ Notifications Log
+    ├─ Task History & Audit Log
+    ├─ User Preferences & DND Settings
+    ├─ Agent Memory (patterns, estimates)
+    └─ Notification Log
         ↓
 External APIs
-    ├─ Groq API (Task prioritization, risk detection, AI insights)
-    ├─ AWS SES (Daily briefings, task reminders)
-    ├─ Telegram Bot API (Quick task logging, notifications)
-    └─ Calendar APIs (Google, Outlook, Apple)
+    ├─ Groq API (task prioritization, risk detection, daily brief generation)
+    ├─ Google Calendar API (read-only OAuth sync)
+    ├─ AWS SES (email digests)
+    └─ Telegram Bot API (primary notification + quick task logging)
 ```
 
-### 3.2 Real-Time Components
-- **WebSocket:** python-socketio for live updates
-- **Real-time Sync:** When one user updates a task, others see it instantly
-- **Live Notifications:** Push notifications via python-socketio
-- **Presence:** Show which users are active
+### 3.2 Proactive Trigger Scheduler
+The agent fires autonomously using APScheduler (runs in-process on Render):
 
-### 3.3 AI Components
-- **LLM:** Groq API (Mixtral 8x7B) for intelligent recommendations
-- **Task Prioritization:** AI analyzes urgency, impact, and dependencies
-- **Risk Detection:** Identifies at-risk tasks before they become problems
-- **Capacity Planning:** Predicts workload and suggests task distribution
-- **Meeting Integration:** Analyzes calendar to suggest best meeting times
-    ├─ Telegram Bot API (Today's tasks, quick status updates)
-    └─ python-socketio (Real-time task updates across team)
-```
+| Trigger | Time / Event | Agent Action |
+|---------|-------------|-------------|
+| Morning Brief | 7:00 AM daily | Fetch tasks + calendar → LLM builds prioritized daily plan → Send via Telegram |
+| Deadline Alert | Anytime — deadline < 24h | Send urgent Telegram notification |
+| Overload Check | 9:00 AM daily | If tasks > available time, suggest what to defer |
+| End-of-Day Debrief | 6:00 PM daily | Summarize what was done, what wasn't, carry-over plan |
+| Weekly Review | Sunday 8:00 PM | Full-week summary + next week preview |
+| New Task Added | Event-driven | Re-evaluate priorities, check for conflicts |
+| Task Completed | Event-driven | Update agent memory (actual vs. estimated time) |
 
-### 3.2 Real-time Components
-- **WebSocket (python-socketio):** Live updates for team members on task changes
-- **Polling:** Simple PostgreSQL polling for notifications (no message queue needed)
-- **Real-time Dashboard:** Live task status updates via python-socketio
+### 3.3 AI/LLM Components
+- **Daily Brief Generation:** Groq LLM synthesizes tasks + calendar into a personalized morning plan
+- **Task Priority Inference:** Groq LLM infers priority from task description when not explicitly set
+- **Risk Summarization:** Groq LLM explains *why* a task is at risk and *what to do about it*
+- **Effort Estimation:** Based on task description + historical patterns (Zero-shot — NO ML until you have data)
+- **Quick Add Parsing:** User sends "remind me to review the Q2 report by Thursday" — LLM parses into structured task
 
-### 3.3 AI/ML Components
-- **Task Prioritization:** Groq LLM analyzes task importance and urgency
-- **Risk Detection:** Groq LLM identifies at-risk tasks and bottlenecks
-- **Effort Estimation:** Groq LLM provides AI-powered time estimates
-- **Smart Recommendations:** Groq LLM suggests next actions and optimizations
-- **Capacity Planning:** Groq LLM predicts team resource needs
+> ⚠️ **No ML-based prioritization yet.** ML requires training data. Until you have 1000+ task completion records, Groq LLM zero-shot prioritization is the right approach. Remove the "ML" framing entirely until you have the data.
 
 ### 3.4 Key Technologies
+- **Agent Framework:** LangGraph (state machine for agent reasoning loop)
+- **Scheduler:** APScheduler (in-process cron, runs on Render)
 - **Backend:** FastAPI/Python on Render (free tier)
-- **Frontend:** React + Vite on Vercel (free tier)
-- **Database:** Supabase PostgreSQL (500MB free tier) - all data centralized
-- **LLM:** Groq API (Mixtral 8x7B) - unlimited free tier for AI insights
-- **Authentication:** Supabase Auth (included, email verification, password reset)
-- **Email:** AWS SES - 62K emails/month free for briefings and reminders
-- **Real-time:** python-socketio (runs on Render) + WebSocket for live updates
-- **Telegram Bot:** Telegram Bot API (free) - task updates and quick logging
-- **File Storage:** Supabase Storage (500MB free) for attachments and documents
+- **Frontend:** React + Vite on Vercel (web-first, no mobile app in MVP)
+- **Database:** Supabase PostgreSQL (500MB free tier)
+- **LLM:** Groq API (Mixtral 8x7B) — unlimited free tier
+- **Authentication:** Supabase Auth
+- **Email:** AWS SES — 62K emails/month free
+- **Telegram Bot:** Telegram Bot API (free) — **primary interface for MVP**
+- **Calendar:** Google Calendar API (OAuth 2.0, read-only scope for MVP)
 
 ---
 
@@ -168,42 +196,26 @@ External APIs
 {
   "user_id": "pm_123",
   "profile": {
-    "name": "Rajesh Kumar",
-    "role": "Project Manager",
-    "organization": "TechCorp",
-    "email": "rajesh@techcorp.com"
+    "name": "Anoop",
+    "role": "Portfolio Director",
+    "email": "anoop@example.com"
   },
   "preferences": {
     "timezone": "IST",
-    "language": "en",
-    "work_hours": {
-      "start": "09:00",
-      "end": "18:00"
+    "work_hours": { "start": "09:00", "end": "18:00" },
+    "notification_channels": {
+      "primary": "telegram",
+      "secondary": "email"
     },
-    "notification_preferences": {
-      "email": true,
-      "push": true,
-      "sms": false,
-      "do_not_disturb": {
-        "enabled": true,
-        "start": "18:00",
-        "end": "09:00"
-      }
+    "do_not_disturb": {
+      "enabled": true,
+      "start": "20:00",
+      "end": "08:00"
     },
-    "calendar_sync": {
-      "google_calendar": {
-        "connected": true,
-        "sync_enabled": true
-      },
-      "outlook": {
-        "connected": false
-      }
-    }
+    "brief_time": "07:00"
   },
-  "team_info": {
-    "team_id": "team_001",
-    "role": "manager",
-    "team_members": [...]
+  "calendar": {
+    "google": { "connected": true, "access_token": "...", "scope": "read_only" }
   }
 }
 ```
@@ -319,23 +331,41 @@ External APIs
 }
 ```
 
-### 4.5 Notification Schema
+### 4.5 Agent Memory Schema
+```json
+{
+  "memory_id": "mem_123",
+  "user_id": "pm_123",
+  "patterns": {
+    "productive_days": ["Tuesday", "Wednesday"],
+    "low_productivity_days": ["Monday"],
+    "avg_tasks_completed_per_day": 6,
+    "estimation_bias": 1.4,
+    "note": "Tasks take 40% longer than estimated on average"
+  },
+  "completion_history": {
+    "last_30_days": { "completed": 72, "missed": 8, "deferred": 15 },
+    "on_time_rate": 0.82
+  },
+  "frequently_missed_categories": ["admin", "reporting"],
+  "updated_at": "2026-04-18"
+}
+```
+
+### 4.6 Notification Log Schema
 ```json
 {
   "notification_id": "notif_001",
   "user_id": "user_123",
   "task_id": "task_001",
-  "type": "due_soon",
-  "priority": "high",
-  "channels": ["push", "email"],
-  "scheduled_time": "2026-04-24T08:00:00Z",
-  "status": "scheduled",
+  "type": "deadline_alert",
+  "channel": "telegram",
+  "sent_at": "2026-04-24T08:00:00Z",
   "content": {
     "title": "Task Due Tomorrow",
-    "body": "Complete Q2 Budget Planning due April 25",
-    "action_url": "app://tasks/task_001"
+    "body": "Complete Q2 Budget Planning due April 25"
   },
-  "created_at": "2026-04-23T10:00:00Z"
+  "acknowledged": false
 }
 ```
 
@@ -343,51 +373,80 @@ External APIs
 
 ## 5. Implementation Phases
 
-### Phase 1: Foundation (Weeks 1-3)
-- [ ] Set up project structure and infrastructure
-- [ ] Build user authentication and profile system
-- [ ] Create task CRUD operations
-- [ ] Implement basic task status management
-- [ ] Build simple web dashboard
-- [ ] Create mobile basic interface
+### Phase 1: Foundation — Core Task Agent (Weeks 1-3)
+**Goal:** A working agent that manages tasks and sends a morning Telegram brief.
+- [ ] Set up infrastructure (Render, Vercel, Supabase, Telegram Bot)
+- [ ] Build task CRUD (create, read, update, delete, complete)
+- [ ] Build basic web dashboard for task management
+- [ ] Implement Groq LLM priority inference (task added → agent infers priority)
+- [ ] Build morning brief: 7 AM cron → fetch tasks → LLM formats → Telegram send
+- [ ] Implement Telegram quick-commands: `/add`, `/done`, `/today`
 
-### Phase 2: Core Features (Weeks 4-6)
-- [ ] Implement project management system
-- [ ] Add task dependencies and priorities
-- [ ] Create basic notifications system
-- [ ] Integrate Google Calendar
-- [ ] Build task filtering and search
-- [ ] Add team collaboration features
+### Phase 2: Intelligence — Proactive Agent (Weeks 4-6)
+**Goal:** Agent acts autonomously, not just on request.
+- [ ] Deadline risk detection (tasks due < 24h with no progress → alert)
+- [ ] Google Calendar OAuth (read-only) + meeting-aware scheduling
+- [ ] Conflict detection: task deadline vs. packed calendar day
+- [ ] Overload detection: too many tasks for available time → suggest defer
+- [ ] End-of-day debrief (6 PM): what was done, what wasn't
+- [ ] Agent memory: track actual vs. estimated time, update patterns
 
-### Phase 3: Intelligence & Integration (Weeks 7-9)
-- [ ] Implement AI recommendation engine
-- [ ] Add portfolio management
-- [ ] Create advanced analytics
-- [ ] Integrate multiple calendar providers
-- [ ] Build workflow automation
-- [ ] Add Slack/Teams integration
+### Phase 3: Memory & Context (Weeks 7-9)
+**Goal:** Agent gets smarter as it learns user patterns.
+- [ ] Medium-term memory: completion rates by day, estimation accuracy
+- [ ] Pattern-based suggestions ("You usually struggle with admin on Mondays — move it to Wednesday")
+- [ ] Weekly review report (Sunday PM summary + next week preview)
+- [ ] Email digests (AWS SES) for users who prefer email over Telegram
+- [ ] Project grouping: organize tasks by project, see project-level progress
 
-### Phase 4: Polish & Deployment (Weeks 10-12)
-- [ ] Advanced analytics and reporting
-- [ ] Mobile app optimization
+### Phase 4: Polish & Launch (Weeks 10-12)
+**Goal:** Solid, reliable agent ready for daily use.
+- [ ] Full web dashboard polish (task list, project view, notification history)
+- [ ] Notification preferences UI (DND hours, channels, brief time)
+- [ ] Agent audit log (what did the agent do and why — transparent reasoning)
 - [ ] Performance testing and optimization
-- [ ] Security audit
-- [ ] Beta testing with power users
+- [ ] Bug fixes and user feedback integration
 - [ ] Production deployment
+
+> **Team collaboration, Gantt charts, and integrations begin Phase 5+ after validating the single-user experience.**
 
 ---
 
 ## 6. API Endpoints
 
 ### Task Management
-- `POST /api/tasks` - Create task
+- `POST /api/tasks` - Create task (LLM infers priority if not set)
 - `GET /api/tasks` - List tasks with filters
 - `GET /api/tasks/{task_id}` - Get task details
 - `PUT /api/tasks/{task_id}` - Update task
 - `DELETE /api/tasks/{task_id}` - Delete task
+- `POST /api/tasks/{task_id}/complete` - Complete task (triggers memory update)
 - `POST /api/tasks/{task_id}/subtasks` - Add subtask
-- `POST /api/tasks/{task_id}/comments` - Add comment
-- `POST /api/tasks/{task_id}/time-log` - Log time spent
+
+### Agent
+- `GET /api/agent/morning-brief` - Trigger morning brief generation
+- `GET /api/agent/at-risk` - Get tasks the agent flags as at-risk
+- `GET /api/agent/suggest-priorities` - Get AI priority recommendations
+- `GET /api/agent/memory` - View what the agent has learned about you
+- `GET /api/agent/audit-log` - Full log of agent actions + reasoning
+
+### Calendar
+- `POST /api/calendar/connect` - Google Calendar OAuth flow
+- `GET /api/calendar/today` - Today's meetings + free time
+- `GET /api/calendar/conflicts` - Tasks conflicting with calendar
+
+### Notifications
+- `GET /api/notifications` - Notification history
+- `PUT /api/notifications/{id}/ack` - Acknowledge notification
+- `POST /api/notifications/preferences` - Update DND, channels, brief time
+
+### Telegram Webhook
+- `POST /api/telegram/webhook` - Receive Telegram messages
+  - `/add [task description]` → Parse + create task with AI priority
+  - `/done [task_id]` → Complete task
+  - `/today` → Send today's task list
+  - `/brief` → Request morning brief on demand
+  - `/risk` → Ask agent what's at risk today
 
 ### Project Management
 - `POST /api/projects` - Create project
@@ -575,32 +634,64 @@ External APIs
 
 ## 11. AI Intelligence Engine
 
-### 11.1 Priority Optimization
-- Historical data analysis
-- Task urgency scoring
-- Impact assessment
-- Resource availability
-- ML-based prioritization
+### 11.1 Priority Inference (Zero-Shot LLM)
+Groq LLM assigns priority based on:
+- Task description and keywords ("urgent", "by EOD", project names)
+- Due date proximity (< 24h = critical, < 72h = high)
+- Historical patterns from agent memory
+
+> No ML model — zero-shot LLM until you have 1000+ labeled task records.
 
 ### 11.2 Effort Estimation
-- Historical similar tasks
-- Team member velocity
-- Complexity assessment
-- Automatic adjustment based on progress
+- Zero-shot LLM estimate based on task description
+- Corrected over time by agent memory ("you consistently underestimate by 40%")
+- Agent applies correction factor automatically in morning brief
 
 ### 11.3 Risk Detection
-- Task delay patterns
-- Resource constraint risks
-- Dependency bottlenecks
-- Scope creep indicators
-- Schedule risk scoring
+- Task deadline approaching + no status update in 24h = at risk
+- Task estimated effort > remaining hours in day = overloaded
+- Task depends on another blocked task = dependency risk
+- Agent explains the risk in plain language, not just a flag
 
-### 11.4 Proactive Suggestions
-- Recommended next actions
-- Bottleneck resolution suggestions
-- Resource reallocation recommendations
-- Task deadline adjustments
-- Workflow optimizations
+### 11.4 Morning Brief Format
+```
+Good morning! Here's your plan for today (April 18):
+
+🔴 CRITICAL (must do today)
+  1. Review Q2 budget proposal — due 5 PM
+  2. Client call prep — meeting at 2 PM (2h to prepare)
+
+🟡 HIGH
+  3. Update project tracker
+  4. Review team PRs
+
+⚠️ AT RISK
+  - "Vendor contract review" is due tomorrow and hasn't been started. Block 1h today.
+
+📊 Today's capacity: 6.5h available (1.5h in meetings)
+  You have 4 tasks estimated at 5.5h — feasible, but tight.
+
+Reply /done [task] when complete, /defer [task] to push to tomorrow.
+```
+
+### 11.5 Evals / Testing
+```
+evals/
+  golden_briefs.json       # Sample task sets + expected brief output
+  eval_priority_accuracy.py  # Does LLM priority match manual labels?
+  eval_risk_detection.py     # Does agent flag right tasks as at-risk?
+  eval_brief_quality.py      # LLM-as-judge: is the brief clear + actionable?
+  run_evals.sh
+```
+
+### 11.6 Prompt Management
+```
+prompts/
+  system_prompt_v1.txt          # Agent persona: direct, concise chief of staff
+  morning_brief_v1.txt          # Template for daily brief
+  priority_inference_v1.txt     # Instructions for priority assignment
+  risk_detection_v1.txt         # Risk assessment prompt
+```
 
 ---
 
@@ -688,12 +779,12 @@ External APIs
 
 | Risk | Impact | Mitigation |
 |------|--------|-----------|
-| Feature bloat | Poor UX | Focus on core features, iterative releases |
-| Calendar sync issues | User frustration | Robust sync testing, good error handling |
-| Notification fatigue | Churn | Smart notification algorithm, user control |
-| Privacy concerns | Legal/Trust | GDPR compliance, encryption, transparency |
-| Market competition | Market share | Superior AI, best UX, integrations |
-| Adoption in org | Retention | Change management, training, support |
+| Agent sends too many notifications | User turns it off | Sensible defaults, easy DND control |
+| Calendar OAuth complexity | Weeks of setup time | Use a library (google-auth-oauthlib), not raw OAuth |
+| Agent reasoning is wrong or annoying | User loses trust | Agent audit log, easy feedback mechanism |
+| Google Calendar rate limits | Silent failures | Cache calendar data, refresh every 15 min |
+| Groq API downtime | No morning brief | Fallback: send task list without LLM formatting |
+| Scope creep  | Solo dev overwhelm | Team features are strictly Phase 5+, no exceptions |
 
 ---
 
@@ -716,15 +807,11 @@ External APIs
 
 ## 18. Timeline & Milestones
 
-- **Month 1:** Core infrastructure, user profiles, basic tasks
-- **Month 2:** Project management, team features
-- **Month 3:** Calendar integration, notifications
-- **Month 4:** Mobile app launch
-- **Month 5:** Analytics and AI features
-- **Month 6:** Workflow automation, integrations
-- **Month 7:** Beta launch with 500 users
-- **Month 8:** Refinements based on feedback
-- **Month 9+:** Production launch, continuous enhancement
+- **Month 1:** Core task management + morning Telegram brief working
+- **Month 2:** Proactive risk detection + Google Calendar integration
+- **Month 3:** Agent memory + weekly review + pattern recognition
+- **Month 4:** Dashboard polish, notification preferences, production launch
+- **Month 5+:** Gather user feedback, decide on next features based on actual usage
 
 ---
 
@@ -758,10 +845,9 @@ External APIs
 
 ## 20. Competitive Advantage
 
-1. **AI-First Approach:** Intelligent recommendations not just task storage
-2. **Mobile Native:** Best-in-class mobile experience from day one
-3. **Contextual Awareness:** Calendar + task integration for true context
-4. **Smart Notifications:** Never miss important deadlines
-5. **Portfolio View:** Multi-project visibility for executives
-6. **Workflow Automation:** Custom automation for organizational processes
-7. **Team Focus:** Built for collaboration from the ground up
+1. **Proactive by default:** Not a passive to-do list — the agent acts before you remember to ask
+2. **Single-user focus:** Designed for *you* specifically, learns your patterns over time
+3. **Telegram native:** Lowest friction interface — ask a question in 5 seconds, get an intelligent answer
+4. **Calendar-aware:** Knows you have 3 hours of meetings, won't overwhelm you with 10 tasks
+5. **Transparent AI:** Agent explains its reasoning — you always know *why* it prioritized something
+6. **Honest about scope:** Won't try to be Jira. Does one thing extremely well first.
