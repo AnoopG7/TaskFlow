@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 import logging
 
 from app.config import get_settings
-from app.api.routes import tasks, agent
+from app.api.routes import tasks, agent, auth
 
 logging.basicConfig(
     level=logging.INFO,
@@ -19,12 +19,31 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Startup: initialize services. Shutdown: cleanup."""
     from app.services.supabase_service import init_supabase
+    from app.services.scheduler import start_scheduler, stop_scheduler
     
     logger.info("🚀 TaskFlow starting up...")
+    
+    # Initialize Supabase
     init_supabase()
     logger.info("✅ Supabase connected")
+    
+    # Start scheduler (only in production)
+    settings = get_settings()
+    if settings.environment == "production":
+        try:
+            start_scheduler()
+            logger.info("✅ Scheduler started")
+        except Exception as e:
+            logger.warning(f"Scheduler failed to start: {e}")
+    
     logger.info("✅ TaskFlow ready")
     yield
+    
+    # Shutdown
+    try:
+        stop_scheduler()
+    except Exception:
+        pass
     logger.info("🛑 TaskFlow shutting down")
 
 
@@ -48,6 +67,7 @@ app.add_middleware(
 # Routes
 app.include_router(tasks.router, prefix="/api/tasks", tags=["Tasks"])
 app.include_router(agent.router, prefix="/api/agent", tags=["Agent"])
+app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
 
 
 @app.post("/webhook/telegram")

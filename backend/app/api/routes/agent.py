@@ -44,19 +44,46 @@ async def chat(req: ChatRequest):
 @router.get("/sessions/{user_id}")
 async def list_sessions(user_id: str, limit: int = 10):
     """List recent sessions for a user."""
+    from app.services.supabase_service import get_supabase_anon
+    
+    client = get_supabase_anon()
+    if client:
+        try:
+            result = (
+                client.table("sessions")
+                .select("id, title, session_type, started_at, ended_at")
+                .eq("user_id", user_id)
+                .order("started_at", desc=True)
+                .limit(limit)
+                .execute()
+            )
+            return {"sessions": result.data or []}
+        except Exception:
+            pass
+    
     return {"sessions": []}
 
 
 @router.get("/sessions/{user_id}/{session_id}/history")
 async def session_history(user_id: str, session_id: str):
     """Get full message history for a session."""
-    return {"session_id": session_id, "messages": []}
+    from app.services.supabase_service import get_session
+    
+    session = await get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    return {
+        "session_id": session_id,
+        "messages": session.get("messages", []),
+    }
 
 
 @router.post("/sessions/{session_id}/close")
 async def end_session(session_id: str):
     """Close a session."""
     from app.agent.memory import close_session
+    
     await close_session(session_id)
     return {"status": "closed", "session_id": session_id}
 

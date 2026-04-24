@@ -1,22 +1,25 @@
 from supabase import create_client, Client
 from app.config import get_settings
 import logging
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
 # Two clients: one with anon key (reads), one with service role (writes)
 _client_anon: Client | None = None
 _client_service: Client | None = None
+_is_connected: bool | None = None
 
 # In-memory fallback for dev
 _tasks: dict[str, list[dict]] = {}
 _profiles: dict[str, dict] = {}
 _memory: dict[str, dict] = {}
+_sessions: dict[str, dict] = {}
 
 
 def init_supabase() -> None:
     """Initialize Supabase clients."""
-    global _client_anon, _client_service
+    global _client_anon, _client_service, _is_connected
     settings = get_settings()
     
     if not settings.supabase_url or not settings.supabase_key:
@@ -27,10 +30,17 @@ def init_supabase() -> None:
     
     if settings.supabase_service_role_key:
         _client_service = create_client(settings.supabase_url, settings.supabase_service_role_key)
-        logger.info("✅ Supabase client initialized (anon + service role)")
     else:
         _client_service = _client_anon
-        logger.info("✅ Supabase client initialized (anon only)")
+    
+    # Test connection once
+    try:
+        _client_anon.table("tasks").select("count").execute()
+        _is_connected = True
+        logger.info("✅ Supabase client connected")
+    except Exception:
+        _is_connected = False
+        logger.warning("Supabase connection failed - using in-memory store")
 
 
 def get_supabase_anon() -> Client | None:
@@ -49,16 +59,12 @@ def get_supabase_service() -> Client | None:
     return _client_service
 
 
-def _is_connected() -> bool:
-    """Check if Supabase is connected."""
-    client = get_supabase_anon()
-    if client is None:
-        return False
-    try:
-        client.table("tasks").select("count").execute()
-        return True
-    except Exception:
-        return False
+def is_connected() -> bool:
+    """Check if Supabase is connected (cached)."""
+    global _is_connected
+    if _is_connected is None:
+        init_supabase()
+    return _is_connected or False
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -69,12 +75,12 @@ async def get_user_profile(user_id: str):
     """Get user profile by user_id."""
     client = get_supabase_anon()
     
-    if _is_connected() and client:
+    if is_connected() and client:
         try:
             result = client.table("user_profiles").select("*").eq("user_id", user_id).maybe_single().execute()
             return result.data if result.data else None
-        except Exception as e:
-            logger.debug(f"Profile fetch failed: {e}")
+        except Exception:
+            pass
     
     return _profiles.get(user_id)
 
@@ -83,12 +89,12 @@ async def upsert_user_profile(profile: dict):
     """Create or update user profile."""
     client = get_supabase_service()
     
-    if _is_connected() and client:
+    if is_connected() and client:
         try:
             result = client.table("user_profiles").upsert(profile, on_conflict="user_id").execute()
             return result.data[0] if result.data else None
-        except Exception as e:
-            logger.debug(f"Profile upsert failed: {e}")
+        except Exception:
+            pass
     
     _profiles[profile["user_id"]] = profile
     return profile
@@ -96,13 +102,13 @@ async def upsert_user_profile(profile: dict):
 
 # ─────────────────────────────────────────────────────────────────
 # TASK OPERATIONS
-# ─────────────────────────────────────────────────────────────────
+# ───���─────────────────────────────────────────────────────────────
 
 async def get_tasks(user_id: str, status: str = None, priority: str = None, due_today: bool = False):
     """Get tasks with optional filters."""
     client = get_supabase_anon()
     
-    if _is_connected() and client:
+    if is_connected() and client:
         try:
             query = client.table("tasks").select("*").eq("user_id", user_id)
             if status:
@@ -111,8 +117,8 @@ async def get_tasks(user_id: str, status: str = None, priority: str = None, due_
                 query = query.eq("priority", priority)
             result = query.execute()
             return result.data or []
-        except Exception as e:
-            logger.debug(f"Tasks fetch failed: {e}")
+        except Exception:
+            pass
     
     tasks = _tasks.get(user_id, [])
     if status:
@@ -126,7 +132,7 @@ async def get_task(task_id: str):
     """Get a single task by ID."""
     client = get_supabase_anon()
     
-    if _is_connected() and client:
+    if is_connected() and client:
         try:
             result = client.table("tasks").select("*").eq("id", task_id).maybe_single().execute()
             return result.data
@@ -141,20 +147,19 @@ async def get_task(task_id: str):
 
 
 async def create_task(task_data: dict):
-    """Create a new task - uses service role to bypass RLS."""
+    """Create a new task."""
     import uuid
     client = get_supabase_service()
     
     if "id" not in task_data:
         task_data["id"] = str(uuid.uuid4())
     
-    if _is_connected() and client:
+    if is_connected() and client:
         try:
             result = client.table("tasks").insert(task_data).execute()
             return result.data[0] if result.data else None
-        except Exception as e:
-            logger.debug(f"Task create failed: {e}")
-            raise
+        except Exception:
+            pass
     
     user_id = task_data.get("user_id")
     if user_id not in _tasks:
@@ -166,9 +171,9 @@ async def create_task(task_data: dict):
 async def update_task(task_id: str, task_data: dict):
     """Update an existing task."""
     client = get_supabase_service()
-    task_data["updated_at"] = "now()"
+    task_data["updated_at"] = datetime.now(timezone.utc).isoformat()
     
-    if _is_connected() and client:
+    if is_connected() and client:
         try:
             result = client.table("tasks").update(task_data).eq("id", task_id).execute()
             return result.data[0] if result.data else None
@@ -185,7 +190,6 @@ async def update_task(task_id: str, task_data: dict):
 
 async def complete_task(task_id: str, actual_hours: float = None):
     """Mark a task as completed."""
-    from datetime import datetime, timezone
     client = get_supabase_service()
     update_data = {
         "status": "completed",
@@ -194,7 +198,7 @@ async def complete_task(task_id: str, actual_hours: float = None):
     if actual_hours:
         update_data["actual_hours"] = actual_hours
     
-    if _is_connected() and client:
+    if is_connected() and client:
         try:
             result = client.table("tasks").update(update_data).eq("id", task_id).execute()
             return result.data[0] if result.data else None
@@ -208,7 +212,7 @@ async def delete_task(task_id: str) -> bool:
     """Delete a task."""
     client = get_supabase_service()
     
-    if _is_connected() and client:
+    if is_connected() and client:
         try:
             result = client.table("tasks").delete().eq("id", task_id).execute()
             return bool(result.data)
@@ -231,7 +235,7 @@ async def get_projects(user_id: str):
     """Get all projects for a user."""
     client = get_supabase_anon()
     
-    if _is_connected() and client:
+    if is_connected() and client:
         try:
             result = client.table("projects").select("*").eq("user_id", user_id).execute()
             return result.data or []
@@ -245,7 +249,7 @@ async def create_project(project_data: dict):
     """Create a new project."""
     client = get_supabase_service()
     
-    if _is_connected() and client:
+    if is_connected() and client:
         try:
             result = client.table("projects").insert(project_data).execute()
             return result.data[0] if result.data else None
@@ -263,7 +267,7 @@ async def get_agent_memory(user_id: str):
     """Get agent memory for a user."""
     client = get_supabase_anon()
     
-    if _is_connected() and client:
+    if is_connected() and client:
         try:
             result = client.table("agent_memory").select("*").eq("user_id", user_id).maybe_single().execute()
             return result.data
@@ -277,7 +281,7 @@ async def upsert_agent_memory(memory: dict):
     """Create or update agent memory."""
     client = get_supabase_service()
     
-    if _is_connected() and client:
+    if is_connected() and client:
         try:
             result = client.table("agent_memory").upsert(memory, on_conflict="user_id").execute()
             return result.data[0] if result.data else None
@@ -297,14 +301,16 @@ async def create_session(session_data: dict):
     import uuid
     client = get_supabase_service()
     session_data.setdefault("id", str(uuid.uuid4()))
+    session_data["updated_at"] = datetime.now(timezone.utc).isoformat()
     
-    if _is_connected() and client:
+    if is_connected() and client:
         try:
             result = client.table("sessions").insert(session_data).execute()
             return result.data[0] if result.data else None
         except Exception:
             pass
     
+    _sessions[session_data["id"]] = session_data
     return session_data
 
 
@@ -312,9 +318,68 @@ async def get_session(session_id: str):
     """Get a session by ID."""
     client = get_supabase_anon()
     
-    if _is_connected() and client:
+    if is_connected() and client:
         try:
             result = client.table("sessions").select("*").eq("id", session_id).maybe_single().execute()
+            return result.data
+        except Exception:
+            pass
+    
+    return _sessions.get(session_id)
+
+
+async def append_session_message(session_id: str, message: dict):
+    """Append a message to a session."""
+    client = get_supabase_service()
+    
+    # Get current messages
+    session = await get_session(session_id)
+    if not session:
+        return
+    
+    messages = session.get("messages", [])
+    messages.append(message)
+    
+    if is_connected() and client:
+        try:
+            client.table("sessions").update({"messages": messages, "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", session_id).execute()
+            return
+        except Exception:
+            pass
+    
+    # Fallback to in-memory
+    if session_id in _sessions:
+        _sessions[session_id]["messages"] = messages
+        _sessions[session_id]["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+
+async def close_session(session_id: str):
+    """Close a session."""
+    client = get_supabase_service()
+    
+    if is_connected() and client:
+        try:
+            client.table("sessions").update({
+                "ended_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }).eq("id", session_id).execute()
+            return
+        except Exception:
+            pass
+    
+    # Fallback to in-memory
+    if session_id in _sessions:
+        _sessions[session_id]["ended_at"] = datetime.now(timezone.utc).isoformat()
+        _sessions[session_id]["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+
+async def get_daily_analytics(user_id: str, date: str = None) -> dict | None:
+    """Get daily analytics."""
+    client = get_supabase_anon()
+    
+    if is_connected() and client and date:
+        try:
+            result = client.table("daily_analytics").select("*").eq("user_id", user_id).eq("analytics_date", date).maybe_single().execute()
             return result.data
         except Exception:
             pass
@@ -322,23 +387,17 @@ async def get_session(session_id: str):
     return None
 
 
-async def append_session_message(session_id: str, message: dict):
-    """Append a message to a session."""
-    pass
-
-
-async def close_session(session_id: str):
-    """Close a session."""
-    pass
-
-
-async def get_daily_analytics(user_id: str, date: str = None) -> dict | None:
-    """Get daily analytics."""
-    return None
-
-
-async def upsert_daily_analytics(analytics: dict) -> dict | None:
+async def upsert_daily_analytics(analytics: dict):
     """Create or update daily analytics."""
+    client = get_supabase_service()
+    
+    if is_connected() and client:
+        try:
+            result = client.table("daily_analytics").upsert(analytics, on_conflict="user_id,analytics_date").execute()
+            return result.data[0] if result.data else None
+        except Exception:
+            pass
+    
     return analytics
 
 

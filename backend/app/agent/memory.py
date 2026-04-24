@@ -134,7 +134,7 @@ async def update_memory_on_complete(user_id: str, task_id: str) -> None:
     await upsert_agent_memory(memory)
     
     # Also update daily analytics
-    today = datetime.now(timezone.utc).date().iso_string()
+    today = datetime.now(timezone.utc).date().isoformat()
     analytics = await get_daily_analytics(user_id, today)
     
     if analytics:

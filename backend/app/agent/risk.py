@@ -167,7 +167,7 @@ async def check_overload(
     )
     
     # Get today's tasks
-    today = datetime.now(timezone.utc).date().iso_string()
+    today = datetime.now(timezone.utc).date().isoformat()
     today_tasks = [
         t for t in tasks
         if t.get("due_date") and t.get("due_date", "").startswith(today)

@@ -1,31 +1,46 @@
 """Task CRUD API routes."""
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
 from pydantic import BaseModel, Field
 from datetime import datetime
+from enum import Enum
 
 router = APIRouter()
+
+
+class Priority(str, Enum):
+    low = "low"
+    medium = "medium"
+    high = "high"
+    critical = "critical"
+
+
+class TaskStatus(str, Enum):
+    pending = "pending"
+    in_progress = "in_progress"
+    completed = "completed"
+    cancelled = "cancelled"
 
 
 class TaskCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=500)
     description: Optional[str] = None
-    priority: str = "medium"
+    priority: Priority = Priority.medium
     due_date: Optional[datetime] = None
     project_id: Optional[str] = None
-    estimated_hours: Optional[float] = None
+    estimated_hours: Optional[float] = Field(None, ge=0, le=24)
     tags: list[str] = []
     auto_prioritize: bool = False
 
 
 class TaskUpdate(BaseModel):
-    title: Optional[str] = None
+    title: Optional[str] = Field(None, min_length=1, max_length=500)
     description: Optional[str] = None
-    priority: Optional[str] = None
-    status: Optional[str] = None
+    priority: Optional[Priority] = None
+    status: Optional[TaskStatus] = None
     due_date: Optional[datetime] = None
-    estimated_hours: Optional[float] = None
-    actual_hours: Optional[float] = None
+    estimated_hours: Optional[float] = Field(None, ge=0, le=24)
+    actual_hours: Optional[float] = Field(None, ge=0, le=24)
     project_id: Optional[str] = None
 
 

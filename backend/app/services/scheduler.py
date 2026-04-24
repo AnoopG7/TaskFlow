@@ -20,19 +20,20 @@ def get_scheduler() -> AsyncIOScheduler:
 async def send_morning_brief():
     """Send morning brief to all active users."""
     from app.agent.loop import run_morning_brief
-    from app.services.supabase_service import get_supabase_client
     
     logger.info("🌅 Running morning brief job...")
     
-    client = get_supabase_client()
+    from app.services.supabase_service import get_supabase_anon
+    client = get_supabase_anon()
     
     # Get all users who have morning briefs enabled
     try:
-        result = client.table("user_profiles").select("user_id, brief_time, notification_channels").execute()
+        result = client.table("user_profiles").select("user_id, brief_time, notification_channels, telegram_chat_id").execute()
         
         for profile in result.data or []:
             user_id = profile.get("user_id")
             channels = profile.get("notification_channels", {})
+            chat_id = profile.get("telegram_chat_id")
             
             if not user_id:
                 continue
@@ -42,10 +43,10 @@ async def send_morning_brief():
                 result = await run_morning_brief(user_id)
                 response = result.get("response", "")
                 
-                # Send via Telegram if configured
-                if channels.get("primary") == "telegram":
+                # Send via Telegram if configured and chat_id exists
+                if channels.get("primary") == "telegram" and chat_id:
                     from app.services.telegram_service import send_message
-                    await send_message(user_id, response)
+                    await send_message(chat_id, response)
                     
             except Exception as e:
                 logger.error(f"Morning brief failed for {user_id}: {e}")
@@ -57,18 +58,19 @@ async def send_morning_brief():
 async def send_evening_debrief():
     """Send end-of-day debrief to all active users."""
     from app.agent.loop import run_evening_debrief
-    from app.services.supabase_service import get_supabase_client
     
     logger.info("🌙 Running evening debrief job...")
     
-    client = get_supabase_client()
+    from app.services.supabase_service import get_supabase_anon
+    client = get_supabase_anon()
     
     try:
-        result = client.table("user_profiles").select("user_id, notification_channels").execute()
+        result = client.table("user_profiles").select("user_id, notification_channels, telegram_chat_id").execute()
         
         for profile in result.data or []:
             user_id = profile.get("user_id")
             channels = profile.get("notification_channels", {})
+            chat_id = profile.get("telegram_chat_id")
             
             if not user_id:
                 continue
@@ -77,9 +79,9 @@ async def send_evening_debrief():
                 result = await run_evening_debrief(user_id)
                 response = result.get("response", "")
                 
-                if channels.get("primary") == "telegram":
+                if channels.get("primary") == "telegram" and chat_id:
                     from app.services.telegram_service import send_message
-                    await send_message(user_id, response)
+                    await send_message(chat_id, response)
                     
             except Exception as e:
                 logger.error(f"Evening debrief failed for {user_id}: {e}")
@@ -91,14 +93,13 @@ async def send_evening_debrief():
 async def scan_deadline_risks():
     """Scan for tasks at risk of missing deadlines."""
     from app.agent.loop import run_agent
-    from app.services.supabase_service import get_supabase_client
-    from datetime import datetime, timedelta
+    from datetime import timedelta
     
     logger.info("⚠️ Running deadline risk scan...")
     
-    client = get_supabase_client()
+    from app.services.supabase_service import get_supabase_anon
+    client = get_supabase_anon()
     
-    # Find tasks due within 24h with no progress
     tomorrow = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
     
     try:
@@ -119,7 +120,6 @@ async def scan_deadline_risks():
             if not user_id:
                 continue
             
-            # Track user tasks
             if user_id not in at_risk_tasks:
                 at_risk_tasks[user_id] = []
             at_risk_tasks[user_id].append(task)
@@ -127,11 +127,20 @@ async def scan_deadline_risks():
         # Notify each user
         for user_id, tasks in at_risk_tasks.items():
             try:
+                # Get user's chat_id
+                profile = client.table("user_profiles").select("telegram_chat_id").eq("user_id", user_id).maybe_single().execute()
+                chat_id = profile.data.get("telegram_chat_id") if profile.data else None
+                
                 task_list = "\n".join(f"- {t['title']}" for t in tasks[:3])
                 message = f"⚠️ *Deadline Alert*\n\nThese tasks are due within 24 hours:\n{task_list}"
                 
-                await run_agent(user_id, message=message, trigger_type="risk_alert")
+                result = await run_agent(user_id, message=message, trigger_type="risk_alert")
                 
+                # Send via Telegram if chat_id exists
+                if chat_id:
+                    from app.services.telegram_service import send_message
+                    await send_message(chat_id, message)
+                    
             except Exception as e:
                 logger.error(f"Risk notification failed for {user_id}: {e}")
                 
