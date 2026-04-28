@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 import logging
 
 from app.config import get_settings
-from app.api.routes import tasks, agent, auth
+from app.api.routes import tasks, agent, auth, projects
 
 logging.basicConfig(
     level=logging.INFO,
@@ -66,6 +66,7 @@ app.add_middleware(
 
 # Routes
 app.include_router(tasks.router, prefix="/api/tasks", tags=["Tasks"])
+app.include_router(projects.router, prefix="/api/projects", tags=["Projects"])
 app.include_router(agent.router, prefix="/api/agent", tags=["Agent"])
 app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
 

@@ -2,6 +2,7 @@
 import json
 import logging
 from pathlib import Path
+from datetime import datetime, timezone
 from app.agent.parser import parse_llm_response, ParsedAction
 from app.agent.memory import (
     get_student_profile,
@@ -25,6 +26,11 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
+
+
+def _get_current_date() -> str:
+    """Get current date and time in ISO format."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
 def _load_prompt_template() -> str:
@@ -111,6 +117,7 @@ def _build_context(
     work_hours = profile.get("work_hours", {"start": 9, "end": 17})
     timezone = profile.get("timezone", "IST")
     bias = memory.get("estimation_bias", 1.0)
+    current_date = _get_current_date()
 
     work_hours_str = f"{work_hours['start']}:00 - {work_hours['end']}:00"
 
@@ -133,8 +140,9 @@ def _build_context(
     system_content = f"""{PROMPT_TEMPLATE}
 
 User's name: {name}
-Work hours: {work_hours_str}
-Timezone: {timezone}
+Current date & time (UTC): {current_date}
+User timezone: {timezone}
+Work hours ({timezone}): {work_hours_str}
 Estimation bias: {bias}x
 
 User's current tasks:

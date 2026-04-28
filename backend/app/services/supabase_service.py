@@ -1,9 +1,15 @@
 from supabase import create_client, Client
+from supabase.lib.client_options import SyncClientOptions
 from app.config import get_settings
 import logging
 from datetime import datetime, timezone
+import httpx
 
 logger = logging.getLogger(__name__)
+
+# HTTP client with timeout to prevent hangs
+_http_client = httpx.Client(timeout=10.0)
+_client_options = SyncClientOptions(httpx_client=_http_client)
 
 # Two clients: one with anon key (reads), one with service role (writes)
 _client_anon: Client | None = None
@@ -26,10 +32,10 @@ def init_supabase() -> None:
         logger.warning("Supabase not configured - using in-memory store")
         return
     
-    _client_anon = create_client(settings.supabase_url, settings.supabase_key)
+    _client_anon = create_client(settings.supabase_url, settings.supabase_key, options=_client_options)
     
     if settings.supabase_service_role_key:
-        _client_service = create_client(settings.supabase_url, settings.supabase_service_role_key)
+        _client_service = create_client(settings.supabase_url, settings.supabase_service_role_key, options=_client_options)
     else:
         _client_service = _client_anon
     
