@@ -11,7 +11,7 @@ Login flow:
   2. Fetch profile name
   3. Return { token, user_id, name }
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel, Field, EmailStr
 from app.services.supabase_service import get_supabase_service, get_supabase_anon
 from typing import Optional
@@ -216,6 +216,17 @@ async def login(req: LoginRequest):
 
 # ─── Profile CRUD ─────────────────────────────────────────────
 
+
+@router.get("/profile")
+async def get_profile(x_user_id: str = Header(..., alias="X-User-ID")):
+    """Get user profile."""
+    from app.services.supabase_service import get_user_profile
+    profile = await get_user_profile(x_user_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return profile
+
+
 @router.post("/profile")
 async def create_or_update_profile(profile: ProfileCreate):
     """Create or update user profile."""
@@ -224,11 +235,66 @@ async def create_or_update_profile(profile: ProfileCreate):
     return result
 
 
-@router.get("/profile")
-async def get_profile(user_id: str):
-    """Get user profile."""
-    from app.services.supabase_service import get_user_profile
-    profile = await get_user_profile(user_id)
-    if not profile:
-        raise HTTPException(status_code=404, detail="Profile not found")
-    return profile
+
+# ─── Agent Preferences ─────────────────────────────────────────────
+
+class AgentPreferencesUpdate(BaseModel):
+    """Schema for updating agent preferences"""
+    # Notifications
+    notification_enabled: Optional[bool] = None
+    dnd_enabled: Optional[bool] = None
+    dnd_start: Optional[str] = None  # "HH:MM"
+    dnd_end: Optional[str] = None    # "HH:MM"
+    morning_brief_time: Optional[str] = None
+
+    # Agent behavior (BASIC - custom instructions only)
+    custom_agent_instructions: Optional[str] = Field(None, max_length=1000)
+
+    # Telegram
+    telegram_chat_id: Optional[str] = None
+    telegram_notifications_enabled: Optional[bool] = None
+
+    # Triggers
+    enable_morning_brief: Optional[bool] = None
+    enable_evening_debrief: Optional[bool] = None
+    enable_risk_detection: Optional[bool] = None
+    enable_overload_warnings: Optional[bool] = None
+
+
+@router.get("/preferences")
+async def get_agent_preferences_endpoint(x_user_id: str = Header(..., alias="X-User-ID")):
+    """Get agent preferences with defaults fallback."""
+    from app.services.supabase_service import get_agent_preferences
+    try:
+        prefs = await get_agent_preferences(x_user_id)
+        return prefs
+    except Exception as e:
+        logger.error(f"Error getting agent preferences: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve preferences")
+
+
+@router.post("/preferences")
+async def update_agent_preferences_endpoint(prefs: AgentPreferencesUpdate, x_user_id: str = Header(..., alias="X-User-ID")):
+    """Update agent preferences."""
+    from app.services.supabase_service import update_agent_preferences
+    try:
+        updates = {k: v for k, v in prefs.model_dump().items() if v is not None}
+        result = await update_agent_preferences(x_user_id, updates)
+        logger.info(f"✅ Agent preferences updated for user {x_user_id}")
+        return result
+    except Exception as e:
+        logger.error(f"Error updating agent preferences: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update preferences")
+
+
+@router.post("/preferences/reset")
+async def reset_agent_preferences_endpoint(x_user_id: str = Header(..., alias="X-User-ID")):
+    """Reset agent preferences to defaults."""
+    from app.services.supabase_service import reset_agent_preferences
+    try:
+        result = await reset_agent_preferences(x_user_id)
+        logger.info(f"✅ Agent preferences reset for user {x_user_id}")
+        return result
+    except Exception as e:
+        logger.error(f"Error resetting agent preferences: {e}")
+        raise HTTPException(status_code=500, detail="Failed to reset preferences")

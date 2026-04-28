@@ -1,4 +1,4 @@
-"""Parse LLM response into actionable items."""
+"""Parse LLM response into actionable items — multi-action support."""
 import json
 import logging
 from pydantic import BaseModel
@@ -7,108 +7,168 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
-class ParsedAction(BaseModel):
-    """Parsed action from LLM response."""
-    intent: str = "chat"
-    task_data: Optional[dict] = None
-    complete_task_id: Optional[str] = None
+class AgentAction(BaseModel):
+    """A single action from the agent response."""
+    type: str  # create_task, create_project, complete_task, chat
+    data: dict = {}
+
+
+class ParsedResponse(BaseModel):
+    """Full parsed agent response with multiple actions."""
     response_text: str = ""
+    actions: list[AgentAction] = []
     confidence: float = 0.5
 
+    # Legacy compat
+    @property
+    def intent(self) -> str:
+        if not self.actions:
+            return "chat"
+        return self.actions[0].type
 
-def parse_llm_response(response: str, profile: dict) -> ParsedAction:
+    @property
+    def task_data(self) -> dict | None:
+        for action in self.actions:
+            if action.type == "create_task":
+                return action.data
+        return None
+
+    @property
+    def complete_task_id(self) -> str | None:
+        for action in self.actions:
+            if action.type == "complete_task":
+                return action.data.get("task_id")
+        return None
+
+
+# Keep legacy alias for backward compat
+ParsedAction = ParsedResponse
+
+
+def parse_llm_response(response: str, profile: dict) -> ParsedResponse:
     """
     Parse LLM response into structured actions.
-    
-    Uses JSON schema in prompt for consistent parsing.
+
+    Supports both new multi-action format and legacy single-action format.
     Falls back to chat intent if parsing fails.
     """
     if not response or not response.strip():
-        return ParsedAction(
-            intent="chat",
+        return ParsedResponse(
             response_text="I'm here to help with your tasks. What would you like to do?",
         )
 
     try:
         # Try to extract JSON from response
-        # Look for JSON block (```json ... ``` or just {...})
         json_start = response.find("{")
         json_end = response.rfind("}")
-        
+
         if json_start != -1 and json_end > json_start:
-            json_str = response[json_start : json_end + 1]
+            json_str = response[json_start: json_end + 1]
             data = json.loads(json_str)
-            
-            return ParsedAction(
-                intent=data.get("intent", "chat"),
-                task_data=data.get("task_data"),
-                complete_task_id=data.get("complete_task_id"),
-                response_text=data.get("response_text", response),
-                confidence=data.get("confidence", 0.7),
+
+            response_text = data.get("response_text", response)
+            confidence = min(1.0, max(0.0, data.get("confidence", 0.7)))
+
+            # New format: actions[] array
+            if "actions" in data and isinstance(data["actions"], list):
+                actions = []
+                for action_data in data["actions"]:
+                    if isinstance(action_data, dict) and "type" in action_data:
+                        actions.append(AgentAction(
+                            type=action_data["type"],
+                            data=action_data.get("data", {}),
+                        ))
+
+                return ParsedResponse(
+                    response_text=response_text,
+                    actions=actions,
+                    confidence=confidence,
+                )
+
+            # Legacy format: single intent + task_data
+            intent = data.get("intent", "chat")
+            actions = []
+
+            if intent == "create_task" and data.get("task_data"):
+                actions.append(AgentAction(type="create_task", data=data["task_data"]))
+            elif intent == "create_project" and data.get("project_data"):
+                actions.append(AgentAction(type="create_project", data=data["project_data"]))
+            elif intent == "complete_task" and data.get("complete_task_id"):
+                actions.append(AgentAction(type="complete_task", data={"task_id": data["complete_task_id"]}))
+
+            return ParsedResponse(
+                response_text=response_text,
+                actions=actions,
+                confidence=confidence,
             )
+
     except json.JSONDecodeError as e:
         logger.debug(f"JSON parse failed: {e}")
-    
-    # Fallback: treat as chat response
-    # Try to detect simple commands
-    response_lower = response.lower().strip()
-    
-    if response_lower.startswith("/done") or "mark" in response_lower and "complete" in response_lower:
-        return ParsedAction(
-            intent="complete_task",
-            response_text=response,
-            confidence=0.8,
-        )
-    elif response_lower.startswith("/add") or "create" in response_lower and "task" in response_lower:
-        return ParsedAction(
-            intent="create_task",
-            response_text=response,
-            confidence=0.8,
-        )
-    elif "morning brief" in response_lower or "today's plan" in response_lower:
-        return ParsedAction(
-            intent="send_brief",
-            response_text=response,
-            confidence=0.9,
-        )
-    
-    return ParsedAction(
-        intent="chat",
+
+    # Fallback: treat as plain chat response
+    return ParsedResponse(
         response_text=response,
+        actions=[],
         confidence=0.5,
     )
 
 
-async def execute_actions(actions: ParsedAction, user_id: str) -> dict:
-    """Execute the parsed actions."""
+async def execute_actions(parsed: ParsedResponse, user_id: str) -> dict:
+    """Execute all parsed actions and return results."""
     from app.services.supabase_service import (
         create_task,
         complete_task,
-        get_tasks,
+        create_project,
+        get_projects,
     )
-    from app.agent.memory import update_memory_on_complete
-    
-    results = {"executed": [], "errors": []}
-    
-    # Create task if requested
-    if actions.intent == "create_task" and actions.task_data:
-        task_data = actions.task_data.copy()
-        task_data["user_id"] = user_id
-        task_data["status"] = "pending"
-        
+
+    results = {"executed": [], "errors": [], "created_project_ids": {}}
+
+    for action in parsed.actions:
         try:
-            result = await create_task(task_data)
-            results["executed"].append({"action": "create_task", "task_id": result["id"]})
+            if action.type == "create_project":
+                project_data = action.data.copy()
+                project_data["user_id"] = user_id
+                project_data["status"] = "active"
+                result = await create_project(project_data)
+                if result:
+                    # Store mapping from name -> id for task linking
+                    results["created_project_ids"][project_data.get("name", "")] = result.get("id")
+                    results["executed"].append({"action": "create_project", "project_id": result.get("id"), "name": project_data.get("name")})
+
+            elif action.type == "create_task":
+                task_data = action.data.copy()
+                task_data["user_id"] = user_id
+                task_data["status"] = "pending"
+
+                # Resolve project_name to project_id
+                project_name = task_data.pop("project_name", None)
+                if project_name:
+                    # Check if we just created this project
+                    project_id = results["created_project_ids"].get(project_name)
+                    if not project_id:
+                        # Search existing projects
+                        projects = await get_projects(user_id)
+                        for p in projects:
+                            if p.get("name", "").lower() == project_name.lower():
+                                project_id = p.get("id")
+                                break
+                    if project_id:
+                        task_data["project_id"] = project_id
+
+                result = await create_task(task_data)
+                if result:
+                    results["executed"].append({"action": "create_task", "task_id": result.get("id"), "title": task_data.get("title")})
+
+            elif action.type == "complete_task":
+                task_id = action.data.get("task_id")
+                if task_id:
+                    result = await complete_task(task_id)
+                    if result:
+                        results["executed"].append({"action": "complete_task", "task_id": task_id})
+
         except Exception as e:
-            results["errors"].append({"action": "create_task", "error": str(e)})
-    
-    # Complete task if requested
-    if actions.intent == "complete_task" and actions.complete_task_id:
-        try:
-            result = await complete_task(actions.complete_task_id)
-            await update_memory_on_complete(user_id, actions.complete_task_id)
-            results["executed"].append({"action": "complete_task", "task_id": actions.complete_task_id})
-        except Exception as e:
-            results["errors"].append({"action": "complete_task", "error": str(e)})
-    
+            logger.error(f"Error executing action {action.type}: {e}")
+            results["errors"].append({"action": action.type, "error": str(e)})
+
     return results

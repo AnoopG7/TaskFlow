@@ -82,8 +82,8 @@ async def session_history(user_id: str, session_id: str):
 @router.post("/sessions/{session_id}/close")
 async def end_session(session_id: str):
     """Close a session."""
-    from app.agent.memory import close_session
-    
+    from app.services.supabase_service import close_session
+
     await close_session(session_id)
     return {"status": "closed", "session_id": session_id}
 

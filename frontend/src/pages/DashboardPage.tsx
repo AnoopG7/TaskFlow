@@ -59,7 +59,7 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!user) return
     api
-      .getTasks(user.user_id)
+      .getTasks()
       .then((res) => setTasks(res.tasks))
       .catch(() => {})
       .finally(() => setLoading(false))

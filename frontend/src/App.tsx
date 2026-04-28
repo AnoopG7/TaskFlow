@@ -8,6 +8,7 @@ import SignupPage from "@/pages/SignupPage"
 import DashboardPage from "@/pages/DashboardPage"
 import TasksPage from "@/pages/TasksPage"
 import ProjectsPage from "@/pages/ProjectsPage"
+import ProjectDetailPage from "@/pages/ProjectDetailPage"
 import ChatPage from "@/pages/ChatPage"
 import SettingsPage from "@/pages/SettingsPage"
 
@@ -39,6 +40,7 @@ function AppRoutes() {
         <Route path="/" element={<DashboardPage />} />
         <Route path="/tasks" element={<TasksPage />} />
         <Route path="/projects" element={<ProjectsPage />} />
+        <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
         <Route path="/chat" element={<ChatPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>

@@ -20,30 +20,34 @@ async def lifespan(app: FastAPI):
     """Startup: initialize services. Shutdown: cleanup."""
     from app.services.supabase_service import init_supabase
     from app.services.scheduler import start_scheduler, stop_scheduler
-    
+
     logger.info("🚀 TaskFlow starting up...")
-    
+
     # Initialize Supabase
-    init_supabase()
-    logger.info("✅ Supabase connected")
-    
+    try:
+        init_supabase()
+        logger.info("✅ Supabase connected")
+    except Exception as e:
+        logger.warning(f"Supabase connection: {e}")
+
     # Start scheduler (only in production)
     settings = get_settings()
     if settings.environment == "production":
         try:
-            start_scheduler()
+            await start_scheduler()
             logger.info("✅ Scheduler started")
         except Exception as e:
             logger.warning(f"Scheduler failed to start: {e}")
-    
+
     logger.info("✅ TaskFlow ready")
     yield
-    
+
     # Shutdown
     try:
-        stop_scheduler()
-    except Exception:
-        pass
+        if settings.environment == "production":
+            await stop_scheduler()
+    except Exception as e:
+        logger.warning(f"Scheduler shutdown: {e}")
     logger.info("🛑 TaskFlow shutting down")
 
 

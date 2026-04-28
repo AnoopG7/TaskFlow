@@ -8,7 +8,7 @@ import { z } from "zod"
 export const taskPriorities = ["low", "medium", "high", "critical"] as const
 export type TaskPriority = (typeof taskPriorities)[number]
 
-export const taskStatuses = ["pending", "in_progress", "completed"] as const
+export const taskStatuses = ["pending", "in_progress", "completed", "cancelled"] as const
 export type TaskStatus = (typeof taskStatuses)[number]
 
 export const taskCreateSchema = z.object({
@@ -65,10 +65,61 @@ export type ProfileUpdateInput = z.infer<typeof profileUpdateSchema>
 
 /* ── Project ────────────────────────────── */
 
+export const projectColors = ["blue", "violet", "emerald", "amber", "rose", "cyan"] as const
+export type ProjectColor = (typeof projectColors)[number]
+
+export const projectStatuses = ["active", "archived", "completed"] as const
+export type ProjectStatus = (typeof projectStatuses)[number]
+
 export const projectCreateSchema = z.object({
   name: z.string().min(1, "Project name is required").max(255),
   description: z.string().optional(),
-  color: z.string().default("blue"),
+  color: z.enum(projectColors).default("blue"),
 })
 
 export type ProjectCreateInput = z.infer<typeof projectCreateSchema>
+
+export const projectUpdateSchema = z.object({
+  name: z.string().min(1, "Project name is required").max(255).optional(),
+  description: z.string().max(2000).optional(),
+  color: z.enum(projectColors).optional(),
+  status: z.enum(projectStatuses).optional(),
+})
+
+export type ProjectUpdateInput = z.infer<typeof projectUpdateSchema>
+
+export const projectDetailSchema = z.object({
+  id: z.string(),
+  user_id: z.string(),
+  name: z.string(),
+  description: z.string().nullable(),
+  status: z.enum(projectStatuses),
+  color: z.enum(projectColors),
+  total_tasks: z.number(),
+  completed_tasks: z.number(),
+  pending_tasks: z.number(),
+  in_progress_tasks: z.number(),
+  completion_percentage: z.number(),
+  created_at: z.string(),
+  updated_at: z.string(),
+})
+
+export type ProjectDetail = z.infer<typeof projectDetailSchema>
+
+export const agentPreferencesSchema = z.object({
+  notification_enabled: z.boolean(),
+  dnd_enabled: z.boolean(),
+  dnd_start: z.string().regex(/^\d{2}:\d{2}$/),
+  dnd_end: z.string().regex(/^\d{2}:\d{2}$/),
+  morning_brief_time: z.string().regex(/^\d{2}:\d{2}$/),
+  custom_agent_instructions: z.string().max(1000).optional(),
+  telegram_chat_id: z.string().optional(),
+  telegram_notifications_enabled: z.boolean(),
+  enable_morning_brief: z.boolean(),
+  enable_evening_debrief: z.boolean(),
+  enable_risk_detection: z.boolean(),
+  enable_overload_warnings: z.boolean(),
+})
+
+export type AgentPreferencesInput = z.infer<typeof agentPreferencesSchema>
+

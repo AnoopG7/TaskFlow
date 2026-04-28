@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { useNavigate } from "react-router-dom"
 import { useAuth } from "@/providers/AuthProvider"
 import { useBanner } from "@/providers/BannerProvider"
 import { api, type Project } from "@/lib/api"
@@ -7,10 +8,10 @@ import { zodResolver } from "@hookform/resolvers/zod"
 import { projectCreateSchema } from "@/lib/schemas"
 import type { z } from "zod"
 import { cn } from "@/lib/utils"
-import { FolderKanban, Plus, X, Palette } from "lucide-react"
+import { FolderKanban, Plus, X, Palette, ArrowRight, BarChart3 } from "lucide-react"
 import { formatDistanceToNow } from "date-fns"
 
-const PROJECT_COLORS = [
+const PROJECT_COLORS: { name: "blue" | "violet" | "emerald" | "amber" | "rose" | "cyan"; class: string }[] = [
   { name: "blue", class: "bg-blue-500" },
   { name: "violet", class: "bg-violet-500" },
   { name: "emerald", class: "bg-emerald-500" },
@@ -20,6 +21,7 @@ const PROJECT_COLORS = [
 ]
 
 export default function ProjectsPage() {
+  const navigate = useNavigate()
   const { user } = useAuth()
   const { showBanner } = useBanner()
   const [projects, setProjects] = useState<Project[]>([])
@@ -29,7 +31,7 @@ export default function ProjectsPage() {
   const loadProjects = () => {
     if (!user) return
     setLoading(true)
-    api.getProjects(user.user_id).then((r) => setProjects(r.projects)).catch(() => {}).finally(() => setLoading(false))
+    api.getProjects().then((r) => setProjects(r.projects)).catch(() => {}).finally(() => setLoading(false))
   }
 
   useEffect(() => { loadProjects() }, [user])
@@ -52,7 +54,7 @@ export default function ProjectsPage() {
   const onSubmit = async (data: FormValues) => {
     if (!user) return
     try {
-      await api.createProject(user.user_id, data)
+      await api.createProject(data)
       showBanner("success", "Project created!")
       reset()
       setShowForm(false)
@@ -141,22 +143,55 @@ export default function ProjectsPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {projects.map((p) => {
             const colorClass = PROJECT_COLORS.find((c) => c.name === p.color)?.class || "bg-blue-500"
+            const totalTasks = p.total_tasks || 0
+            const completedTasks = p.completed_tasks || 0
+            const completionPercentage = p.completion_percentage || 0
+
             return (
-              <div
+              <button
                 key={p.id}
-                className="rounded-xl border border-border bg-card p-5 hover:shadow-sm transition-shadow"
+                onClick={() => navigate(`/projects/${p.id}`)}
+                className="rounded-xl border border-border bg-card p-5 hover:shadow-md hover:border-primary/50 transition-all text-left group"
               >
-                <div className="flex items-center gap-3 mb-3">
-                  <div className={cn("h-3 w-3 rounded-full", colorClass)} />
-                  <h3 className="font-semibold">{p.name}</h3>
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                    <div className={cn("h-3 w-3 rounded-full flex-shrink-0", colorClass)} />
+                    <h3 className="font-semibold group-hover:text-primary transition-colors truncate">{p.name}</h3>
+                  </div>
+                  <ArrowRight className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors flex-shrink-0 ml-2" />
                 </div>
+
                 {p.description && (
                   <p className="text-sm text-muted-foreground line-clamp-2 mb-3">{p.description}</p>
                 )}
-                <p className="text-xs text-muted-foreground">
+
+                {/* Stats */}
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <BarChart3 className="h-3.5 w-3.5" />
+                    <span>{completedTasks} of {totalTasks} tasks</span>
+                  </div>
+
+                  {totalTasks > 0 && (
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="text-muted-foreground">Progress</span>
+                        <span className="font-medium text-foreground">{Math.round(completionPercentage)}%</span>
+                      </div>
+                      <div className="h-1.5 bg-secondary rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-gradient-to-r from-blue-500 to-emerald-500 transition-all"
+                          style={{ width: `${completionPercentage}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <p className="text-[11px] text-muted-foreground mt-3 pt-3 border-t border-border">
                   Created {formatDistanceToNow(new Date(p.created_at + "Z"), { addSuffix: true })}
                 </p>
-              </div>
+              </button>
             )
           })}
         </div>

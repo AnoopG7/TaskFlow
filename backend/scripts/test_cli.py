@@ -10,7 +10,6 @@ logger = logging.getLogger(__name__)
 async def main():
     """Interactive CLI loop."""
     from app.agent.loop import run_agent, run_morning_brief
-    from app.agent.risk import get_at_risk_tasks, check_overload
     from app.services.supabase_service import get_tasks, create_task
     import app.services.supabase_service as db
     
@@ -67,26 +66,15 @@ async def main():
                 continue
             
             if user_input.lower() == "risk":
-                print("\n⚠️ Checking at-risk tasks...")
-                tasks = await get_tasks(user_id, status="pending")
-                at_risk = await get_at_risk_tasks(user_id, tasks)
-                if not at_risk:
-                    print("  No at-risk tasks!")
-                else:
-                    for r in at_risk[:5]:
-                        print(f"  [{r['level'].upper()}] {r.get('task_title')}")
-                        print(f"    Score: {r.get('score')}, Factors: {r.get('factors')}")
+                print("\n⚠️ Checking at-risk tasks via agent...")
+                result = await run_agent(user_id, message="Show me tasks at risk", trigger_type="risk_scan")
+                print(f"  Agent: {result.get('response', 'No response')}")
                 continue
             
             if user_input.lower() == "load":
-                print("\n📊 Checking workload...")
-                tasks = await get_tasks(user_id, status="pending")
-                assessment = await check_overload(tasks, expected_hours_today=8.0, meetings_hours=2.0)
-                print(f"  Available: {assessment['available_hours']}h")
-                print(f"  Estimated today: {assessment['estimated_hours_today']}h")
-                print(f"  Overloaded: {assessment['is_overloaded']}")
-                if assessment.get('recommendation'):
-                    print(f"  Recommendation: {assessment['recommendation']}")
+                print("\n📊 Checking workload via agent...")
+                result = await run_agent(user_id, message="Am I overloaded today? Check my workload.")
+                print(f"  Agent: {result.get('response', 'No response')}")
                 continue
             
             if user_input.lower().startswith("add "):

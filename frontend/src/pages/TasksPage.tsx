@@ -7,16 +7,16 @@ import { api, type Task } from "@/lib/api"
 import { taskCreateSchema, taskPriorities } from "@/lib/schemas"
 import type { z } from "zod"
 import { cn } from "@/lib/utils"
+import TaskStatusSelector from "@/components/TaskStatusSelector"
 import {
   Plus,
   Search,
-  CheckCircle2,
-  Circle,
   X,
   ChevronDown,
   Calendar,
   Clock,
   Trash2,
+  FolderKanban,
 } from "lucide-react"
 import { format, formatDistanceToNow } from "date-fns"
 
@@ -47,7 +47,7 @@ export default function TasksPage() {
     if (!user) return
     setLoading(true)
     api
-      .getTasks(user.user_id)
+      .getTasks()
       .then((res) => setTasks(res.tasks))
       .catch(() => {})
       .finally(() => setLoading(false))
@@ -70,7 +70,7 @@ export default function TasksPage() {
   const onSubmit = async (data: FormValues) => {
     if (!user) return
     try {
-      await api.createTask(user.user_id, data)
+      await api.createTask(data)
       reset()
       setShowForm(false)
       setSearchParams({})
@@ -80,17 +80,8 @@ export default function TasksPage() {
     }
   }
 
-  const toggleComplete = async (task: Task) => {
-    try {
-      if (task.status === "completed") {
-        await api.updateTask(task.id, { status: "pending" })
-      } else {
-        await api.completeTask(task.id)
-      }
-      loadTasks()
-    } catch {
-      /* toast */
-    }
+  const handleStatusChange = () => {
+    loadTasks()
   }
 
   const deleteTask = async (id: string) => {
@@ -107,14 +98,19 @@ export default function TasksPage() {
     .filter((t) => {
       if (filter === "all") return true
       if (filter === "pending") return t.status === "pending"
+      if (filter === "in_progress") return t.status === "in_progress"
       if (filter === "completed") return t.status === "completed"
-      if (filter === "overdue") return t.status === "pending" && t.due_date && new Date(t.due_date) < new Date()
+      if (filter === "cancelled") return t.status === "cancelled"
+      if (filter === "overdue") return t.status !== "completed" && t.due_date && new Date(t.due_date) < new Date()
       return taskPriorities.includes(filter as (typeof taskPriorities)[number]) && t.priority === filter
     })
     .filter((t) => !searchQuery || t.title.toLowerCase().includes(searchQuery.toLowerCase()))
     .sort((a, b) => {
-      // Pending first, then by priority weight, then by due date
-      if (a.status !== b.status) return a.status === "pending" ? -1 : 1
+      // Active tasks first, then by priority weight, then by due date
+      const statusOrder: Record<string, number> = { in_progress: 0, pending: 1, completed: 2, cancelled: 3 }
+      const sa = statusOrder[a.status] ?? 1
+      const sb = statusOrder[b.status] ?? 1
+      if (sa !== sb) return sa - sb
       const pw: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 }
       if ((pw[a.priority] ?? 2) !== (pw[b.priority] ?? 2)) return (pw[a.priority] ?? 2) - (pw[b.priority] ?? 2)
       if (a.due_date && b.due_date) return new Date(a.due_date).getTime() - new Date(b.due_date).getTime()
@@ -128,7 +124,7 @@ export default function TasksPage() {
         <div>
           <h1 className="text-2xl font-bold text-foreground">Tasks</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            {tasks.filter((t) => t.status === "pending").length} pending • {tasks.filter((t) => t.status === "completed").length} completed
+            {tasks.filter((t) => t.status === "pending" || t.status === "in_progress").length} active • {tasks.filter((t) => t.status === "completed").length} completed
           </p>
         </div>
         <button
@@ -229,7 +225,7 @@ export default function TasksPage() {
             className="w-full rounded-lg bg-secondary border border-border pl-9 pr-3 py-2 text-sm outline-none focus-ring"
           />
         </div>
-        {["all", "pending", "completed", "overdue", "critical", "high"].map((f) => (
+        {["all", "pending", "in_progress", "completed", "cancelled", "overdue", "critical", "high"].map((f) => (
           <button
             key={f}
             onClick={() => setFilter(f)}
@@ -240,7 +236,7 @@ export default function TasksPage() {
                 : "bg-secondary text-muted-foreground border-border hover:bg-muted"
             )}
           >
-            {f.charAt(0).toUpperCase() + f.slice(1)}
+            {f.split("_").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ")}
           </button>
         ))}
       </div>
@@ -260,61 +256,70 @@ export default function TasksPage() {
             <div
               key={task.id}
               className={cn(
-                "flex items-start gap-4 rounded-xl border-l-4 border border-border px-5 py-4 transition-all hover:shadow-sm",
+                "rounded-xl border-l-4 border border-border px-5 py-4 transition-all hover:shadow-sm",
                 priorityColors[task.priority] || "",
                 task.status === "completed" && "opacity-60"
               )}
             >
-              <button
-                onClick={() => toggleComplete(task)}
-                className="mt-0.5 flex-shrink-0 transition-colors"
-              >
-                {task.status === "completed" ? (
-                  <CheckCircle2 className="h-5 w-5 text-emerald-500" />
-                ) : (
-                  <Circle className="h-5 w-5 text-muted-foreground hover:text-primary" />
-                )}
-              </button>
+              <div className="flex items-start gap-4">
+                <div className="flex-1 min-w-0 space-y-2">
+                  <div className="flex items-start gap-3">
+                    <div className="flex-1 min-w-0">
+                      <p className={cn("text-sm font-medium", task.status === "completed" && "line-through text-muted-foreground")}>
+                        {task.title}
+                      </p>
+                      {task.description && (
+                        <p className="text-xs text-muted-foreground mt-1 truncate">{task.description}</p>
+                      )}
+                    </div>
 
-              <div className="flex-1 min-w-0">
-                <p className={cn("text-sm font-medium", task.status === "completed" && "line-through text-muted-foreground")}>
-                  {task.title}
-                </p>
-                {task.description && (
-                  <p className="text-xs text-muted-foreground mt-1 truncate">{task.description}</p>
-                )}
-                <div className="flex items-center gap-3 mt-2 flex-wrap">
-                  <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                    <span className={cn("h-2 w-2 rounded-full", priorityDots[task.priority])} />
-                    {task.priority}
-                  </span>
-                  {task.due_date && (
-                    <span className={cn(
-                      "text-[11px]",
-                      new Date(task.due_date) < new Date() && task.status !== "completed"
-                        ? "text-red-500 font-medium"
-                        : "text-muted-foreground"
-                    )}>
-                      <Calendar className="h-3 w-3 inline mr-1" />
-                      {format(new Date(task.due_date), "MMM d")} •{" "}
-                      {formatDistanceToNow(new Date(task.due_date + "Z"), { addSuffix: true })}
+                    {/* Compact Status Selector */}
+                    <TaskStatusSelector
+                      taskId={task.id}
+                      currentStatus={task.status}
+                      onStatusChange={handleStatusChange}
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                      <span className={cn("h-2 w-2 rounded-full", priorityDots[task.priority])} />
+                      {task.priority}
                     </span>
-                  )}
-                  {task.estimated_hours && (
-                    <span className="text-[11px] text-muted-foreground">
-                      <Clock className="h-3 w-3 inline mr-1" />
-                      {task.estimated_hours}h est
-                    </span>
-                  )}
+                    {task.project_id && (
+                      <span className="flex items-center gap-1 text-[11px] text-blue-600 dark:text-blue-400 font-medium">
+                        <FolderKanban className="h-3 w-3" />
+                        Project
+                      </span>
+                    )}
+                    {task.due_date && (
+                      <span className={cn(
+                        "text-[11px]",
+                        new Date(task.due_date) < new Date() && task.status !== "completed"
+                          ? "text-red-500 font-medium"
+                          : "text-muted-foreground"
+                      )}>
+                        <Calendar className="h-3 w-3 inline mr-1" />
+                        {format(new Date(task.due_date), "MMM d")} •{" "}
+                        {formatDistanceToNow(new Date(task.due_date + "Z"), { addSuffix: true })}
+                      </span>
+                    )}
+                    {task.estimated_hours && (
+                      <span className="text-[11px] text-muted-foreground">
+                        <Clock className="h-3 w-3 inline mr-1" />
+                        {task.estimated_hours}h est
+                      </span>
+                    )}
+                  </div>
                 </div>
-              </div>
 
-              <button
-                onClick={() => deleteTask(task.id)}
-                className="flex-shrink-0 p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
+                <button
+                  onClick={() => deleteTask(task.id)}
+                  className="flex-shrink-0 p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
             </div>
           ))}
         </div>

@@ -50,18 +50,21 @@ async def get_session_history(session_id: str) -> list[dict]:
 
 async def update_session_title(session_id: str, message: str) -> None:
     """Update session title from first message."""
-    from app.services.supabase_service import get_session
-    from app.services.supabase_service import get_supabase_client
-    
+    from app.services.supabase_service import get_session, get_supabase_service
+
     session = await get_session(session_id)
     if not session:
         return
-    
+
     # Use first few words of message as title
     title = message[:50] + "..." if len(message) > 50 else message
-    
-    client = get_supabase_client()
-    client.table("sessions").update({"title": title}).eq("id", session_id).execute()
+
+    client = get_supabase_service()
+    if client:
+        try:
+            client.table("sessions").update({"title": title}).eq("id", session_id).execute()
+        except Exception:
+            pass
 
 
 async def close_session(session_id: str) -> None:

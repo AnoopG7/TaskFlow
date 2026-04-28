@@ -1,5 +1,6 @@
 /**
  * API Client — typed wrapper for backend /api/* endpoints.
+ * All authenticated endpoints send X-User-ID header.
  * Auth token management, proper error handling.
  */
 
@@ -29,8 +30,14 @@ export interface Project {
   user_id: string
   name: string
   description: string | null
-  status: string
-  color: string
+  status: "active" | "archived" | "completed"
+  color: "blue" | "violet" | "emerald" | "amber" | "rose" | "cyan"
+  total_tasks?: number
+  completed_tasks?: number
+  pending_tasks?: number
+  in_progress_tasks?: number
+  cancelled_tasks?: number
+  completion_percentage?: number
   created_at: string
   updated_at: string
 }
@@ -101,6 +108,33 @@ export interface AgentMemory {
   frequently_missed: string[]
 }
 
+export interface AgentPreferences {
+  user_id?: string
+  notification_enabled: boolean
+  dnd_enabled: boolean
+  dnd_start: string
+  dnd_end: string
+  morning_brief_time: string
+  custom_agent_instructions?: string
+  telegram_chat_id?: string
+  telegram_notifications_enabled: boolean
+  enable_morning_brief: boolean
+  enable_evening_debrief: boolean
+  enable_risk_detection: boolean
+  enable_overload_warnings: boolean
+  created_at?: string
+  updated_at?: string
+}
+
+export interface ParseAndCreateResponse {
+  success: boolean
+  tasks_created: Array<{ id: string; title: string; priority: string; status: string }>
+  parsing_warnings: string[]
+  creation_errors: string[]
+  parse_result?: { parsing_confidence: number }
+  error?: string
+}
+
 /* ── Error ──────────────────────────────── */
 
 export class APIError extends Error {
@@ -138,16 +172,31 @@ class APIClient {
     localStorage.removeItem("tf-auth-token")
   }
 
+  /* ── User ID ───────────────────────── */
+
+  private getUserId(): string | null {
+    try {
+      const raw = localStorage.getItem("tf-auth-user")
+      if (!raw) return null
+      const parsed = JSON.parse(raw)
+      return parsed.user_id || null
+    } catch {
+      return null
+    }
+  }
+
   /* ── Request helpers ───────────────── */
 
   private getHeaders(): HeadersInit {
     const headers: HeadersInit = { "Content-Type": "application/json" }
     const token = this.getAuthToken()
     if (token) headers["Authorization"] = `Bearer ${token}`
+    const userId = this.getUserId()
+    if (userId) headers["X-User-ID"] = userId
     return headers
   }
 
-  private async request<T>(path: string, init?: RequestInit): Promise<T> {
+  async request<T>(path: string, init?: RequestInit): Promise<T> {
     const res = await fetch(`${this.baseURL}${path}`, {
       ...init,
       headers: { ...this.getHeaders(), ...init?.headers },
@@ -195,19 +244,20 @@ class APIClient {
 
   /* ── Tasks ─────────────────────────── */
 
-  async getTasks(userId: string, filters?: { status?: string; priority?: string }): Promise<{ tasks: Task[] }> {
-    const params = new URLSearchParams({ user_id: userId })
+  async getTasks(filters?: { status?: string; priority?: string }): Promise<{ tasks: Task[] }> {
+    const params = new URLSearchParams()
     if (filters?.status) params.set("status", filters.status)
     if (filters?.priority) params.set("priority", filters.priority)
-    return this.request(`/tasks?${params}`)
+    const qs = params.toString()
+    return this.request(`/tasks${qs ? "?" + qs : ""}`)
   }
 
   async getTask(taskId: string): Promise<Task> {
     return this.request(`/tasks/${taskId}`)
   }
 
-  async createTask(userId: string, data: Record<string, unknown>): Promise<Task> {
-    return this.request("/tasks?" + new URLSearchParams({ user_id: userId }), {
+  async createTask(data: Record<string, unknown>): Promise<Task> {
+    return this.request("/tasks", {
       method: "POST",
       body: JSON.stringify(data),
     })
@@ -229,17 +279,78 @@ class APIClient {
     return this.request(`/tasks/${taskId}`, { method: "DELETE" })
   }
 
-  /* ── Projects ──────────────────────── */
-
-  async getProjects(userId: string): Promise<{ projects: Project[] }> {
-    return this.request(`/projects?user_id=${userId}`)
+  async searchTasks(query: string, excludeProjectId?: string): Promise<{ tasks: Task[] }> {
+    const params = new URLSearchParams({ q: query })
+    if (excludeProjectId) params.set("exclude_project_id", excludeProjectId)
+    return this.request(`/tasks/search?${params}`)
   }
 
-  async createProject(userId: string, data: Record<string, unknown>): Promise<Project> {
-    return this.request("/projects?" + new URLSearchParams({ user_id: userId }), {
+  async parseAndCreateTasks(data: { description: string; project_id?: string | null; user_instructions?: string | null }): Promise<ParseAndCreateResponse> {
+    return this.request("/tasks/batch/parse-and-create", {
       method: "POST",
       body: JSON.stringify(data),
     })
+  }
+
+  async getTaskAllowedTransitions(taskId: string): Promise<{
+    task_id: string
+    current_status: string
+    allowed_transitions: string[]
+    status_descriptions: Record<string, string>
+  }> {
+    return this.request(`/tasks/${taskId}/allowed-transitions`)
+  }
+
+  /* ── Projects ──────────────────────── */
+
+  async getProjects(): Promise<{ projects: Project[]; total: number }> {
+    return this.request("/projects")
+  }
+
+  async getProject(projectId: string): Promise<Project> {
+    return this.request(`/projects/${projectId}`)
+  }
+
+  async createProject(data: Record<string, unknown>): Promise<Project> {
+    return this.request("/projects", {
+      method: "POST",
+      body: JSON.stringify(data),
+    })
+  }
+
+  async updateProject(projectId: string, data: Record<string, unknown>): Promise<Project> {
+    return this.request(`/projects/${projectId}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    })
+  }
+
+  async deleteProject(projectId: string, cascade: boolean = true): Promise<void> {
+    await this.request(`/projects/${projectId}?cascade=${cascade}`, { method: "DELETE" })
+  }
+
+  async getProjectTasks(projectId: string, filters?: { status?: string; priority?: string; limit?: number; offset?: number }): Promise<{ tasks: Task[]; total: number; limit: number; offset: number }> {
+    const params = new URLSearchParams()
+    if (filters?.status) params.set("status", filters.status)
+    if (filters?.priority) params.set("priority", filters.priority)
+    if (filters?.limit) params.set("limit", filters.limit.toString())
+    if (filters?.offset) params.set("offset", filters.offset.toString())
+    return this.request(`/projects/${projectId}/tasks?${params}`)
+  }
+
+  async linkTasksToProject(projectId: string, taskIds: string[]): Promise<{ success: boolean; linked: number; tasks: Task[] }> {
+    return this.request(`/projects/${projectId}/tasks/link`, {
+      method: "POST",
+      body: JSON.stringify({ task_ids: taskIds }),
+    })
+  }
+
+  async unlinkTaskFromProject(projectId: string, taskId: string): Promise<{ status: string; task_id: string }> {
+    return this.request(`/projects/${projectId}/tasks/unlink/${taskId}`, { method: "POST" })
+  }
+
+  async getProjectAnalytics(projectId: string): Promise<Record<string, unknown>> {
+    return this.request(`/projects/${projectId}/analytics`)
   }
 
   /* ── Agent / Chat ──────────────────── */
@@ -270,10 +381,27 @@ class APIClient {
     return this.request(`/agent/memory?user_id=${userId}`)
   }
 
+  /* ── Preferences ───────────────────── */
+
+  async getAgentPreferences(): Promise<AgentPreferences> {
+    return this.request("/auth/preferences")
+  }
+
+  async updateAgentPreferences(data: Record<string, unknown>): Promise<AgentPreferences> {
+    return this.request("/auth/preferences", {
+      method: "POST",
+      body: JSON.stringify(data),
+    })
+  }
+
+  async resetAgentPreferences(): Promise<AgentPreferences> {
+    return this.request("/auth/preferences/reset", { method: "POST" })
+  }
+
   /* ── Profile ───────────────────────── */
 
-  async getProfile(userId: string): Promise<UserProfile> {
-    return this.request(`/auth/profile?user_id=${userId}`)
+  async getProfile(): Promise<UserProfile> {
+    return this.request("/auth/profile")
   }
 
   async createOrUpdateProfile(data: Record<string, unknown>): Promise<UserProfile> {
