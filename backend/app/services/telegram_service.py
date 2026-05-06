@@ -93,6 +93,23 @@ async def set_webhook(webhook_url: str) -> bool:
         return False
 
 
+def get_webhook_url() -> str:
+    """Get the full webhook URL from config."""
+    settings = get_settings()
+    if not settings.webhook_base_url:
+        logger.warning("WEBHOOK_BASE_URL not configured")
+        return ""
+    return f"{settings.webhook_base_url}/webhook/telegram"
+
+
+async def setup_webhook() -> bool:
+    """Set webhook using the configured base URL."""
+    webhook_url = get_webhook_url()
+    if not webhook_url:
+        return False
+    return await set_webhook(webhook_url)
+
+
 async def get_me() -> dict | None:
     """Get bot information."""
     bot = _get_bot()
@@ -119,6 +136,7 @@ async def handle_webhook_update(update: dict) -> dict:
         Response dict with action to take
     """
     from app.agent.loop import run_agent
+    from app.services.supabase_service import get_supabase_anon
     
     if "message" not in update:
         return {"action": "ignore", "reason": "no_message"}
@@ -128,7 +146,52 @@ async def handle_webhook_update(update: dict) -> dict:
     text = message.get("text", "")
     
     chat_id = str(chat.get("id"))
-    user_id = chat_id  # Use chat_id as user_id for Telegram users
+    
+    # ✅ Look up the real user by their telegram_chat_id
+    # Try user_profiles first, then agent_preferences as fallback
+    user_id: str | None = None
+    db = get_supabase_anon()
+    
+    if not db:
+        logger.error("❌ Supabase client not available")
+        return {
+            "action": "respond",
+            "chat_id": chat_id,
+            "message": "System is currently unavailable. Please try again later.",
+        }
+    
+    try:
+        # Query user_profiles table
+        result = db.table("user_profiles").select("user_id").eq("telegram_chat_id", chat_id).execute()
+        
+        if result.data and len(result.data) > 0:
+            user_id = result.data[0]["user_id"]
+            logger.info(f"✅ Telegram {chat_id} linked to user {user_id} (via user_profiles)")
+    except Exception as e:
+        logger.warning(f"Error querying user_profiles: {e}")
+    
+    # Fallback: query agent_preferences if not found
+    if not user_id:
+        try:
+            result = db.table("agent_preferences").select("user_id").eq("telegram_chat_id", chat_id).execute()
+            
+            if result.data and len(result.data) > 0:
+                user_id = result.data[0]["user_id"]
+                logger.info(f"✅ Telegram {chat_id} linked to user {user_id} (via agent_preferences)")
+        except Exception as e:
+            logger.warning(f"Error querying agent_preferences: {e}")
+    
+    if not user_id:
+        logger.warning(f"⚠️ Telegram {chat_id} not linked to any user")
+        return {
+            "action": "respond",
+            "chat_id": chat_id,
+            "message": "⚠️ Telegram not linked to your TaskFlow account.\n\n"
+                       "To link your account:\n"
+                       "1. Get your Telegram Chat ID by messaging @userinfobot\n"
+                       "2. Go to TaskFlow → Settings → Telegram Chat ID\n"
+                       "3. Enter your ID and save",
+        }
     
     # Handle commands
     if text.startswith("/"):
@@ -138,7 +201,12 @@ async def handle_webhook_update(update: dict) -> dict:
             return {
                 "action": "welcome",
                 "chat_id": chat_id,
-                "message": "Welcome to TaskFlow! I'm your personal chief of staff.",
+                "message": f"👋 Welcome to TaskFlow! I'm your personal chief of staff.\n\n"
+                           "I can help you manage tasks and projects. Try:\n"
+                           "• `/today` - See your pending tasks\n"
+                           "• `/brief` - Get your morning brief\n"
+                           "• `/help` - Show all commands\n\n"
+                           "Or just tell me what to do in plain English!",
             }
         
         elif command == "/today":
@@ -167,13 +235,15 @@ async def handle_webhook_update(update: dict) -> dict:
 /brief - Get morning brief
 /help - Show this help
 
-Natural language also works! Just tell me what to do.""",
+Natural language also works! Just tell me what to do.
+
+Example: *"Create a task to review PR 456, high priority, due tomorrow"*""",
             }
         
         return {
             "action": "unknown_command",
             "chat_id": chat_id,
-            "message": f"Unknown command: {command}",
+            "message": f"Unknown command: {command}\n\nUse /help to see available commands.",
         }
     
     # Handle natural language
@@ -184,3 +254,64 @@ Natural language also works! Just tell me what to do.""",
         "chat_id": chat_id,
         "message": result.get("response", "Done!"),
     }
+
+
+async def start_polling():
+    """
+    Poll Telegram for updates (for local development).
+    This is used instead of webhooks when running locally without HTTPS.
+    """
+    from app.services.supabase_service import get_supabase_anon
+    
+    bot = _get_bot()
+    if not bot:
+        logger.warning("❌ Telegram bot not configured, skipping polling")
+        return
+    
+    # Delete any existing webhook so polling works
+    try:
+        await bot.delete_webhook()
+        logger.info("✅ Webhook deleted, using polling mode")
+    except Exception as e:
+        logger.warning(f"Failed to delete webhook: {e}")
+    
+    last_update_id = None
+    logger.info("🔄 Starting Telegram polling... (polling for updates every 2s)")
+    
+    while True:
+        try:
+            updates = await bot.get_updates(
+                offset=last_update_id,
+                timeout=30,
+                allowed_updates=["message"],
+            )
+            
+            for update in updates:
+                last_update_id = update.update_id + 1
+                
+                # Convert Update object to dict format expected by handle_webhook_update
+                update_dict = {
+                    "message": {
+                        "chat": {"id": str(update.message.chat.id)},
+                        "text": update.message.text or "",
+                        "message_id": update.message.message_id,
+                    }
+                }
+                
+                result = await handle_webhook_update(update_dict)
+                
+                if result.get("action") == "respond":
+                    await send_message(
+                        chat_id=result["chat_id"],
+                        text=result["message"],
+                    )
+                elif result.get("action") == "welcome":
+                    await send_message(
+                        chat_id=result["chat_id"],
+                        text=result["message"],
+                    )
+        
+        except Exception as e:
+            logger.error(f"Polling error: {e}")
+        
+        await asyncio.sleep(2)

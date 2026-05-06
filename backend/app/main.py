@@ -39,6 +39,21 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"Scheduler failed to start: {e}")
 
+    # Setup Telegram
+    try:
+        from app.services.telegram_service import setup_webhook, start_polling
+        settings = get_settings()
+        if settings.environment == "production" or (settings.webhook_base_url and settings.webhook_base_url.startswith("https")):
+            if await setup_webhook():
+                logger.info(f"✅ Telegram webhook configured")
+        else:
+            # Local dev - use polling mode instead of webhook
+            import asyncio
+            asyncio.create_task(start_polling())
+            logger.info("📱 Telegram polling started (local dev mode)")
+    except Exception as e:
+        logger.warning(f"Telegram setup failed: {e}")
+
     logger.info("✅ TaskFlow ready")
     yield
 
@@ -102,7 +117,28 @@ async def telegram_webhook(request: Request):
 
 @app.get("/health", tags=["System"])
 async def health_check():
-    return {"status": "healthy", "service": "TaskFlow Agent", "version": "0.1.0"}
+    from app.services.telegram_service import get_webhook_url
+    settings = get_settings()
+    return {
+        "status": "healthy",
+        "service": "TaskFlow Agent",
+        "version": "0.1.0",
+        "environment": settings.environment,
+        "webhook_url": get_webhook_url(),
+    }
+
+
+@app.post("/setup-webhook", tags=["System"])
+async def setup_webhook_endpoint():
+    """Manually trigger Telegram webhook setup."""
+    from app.services.telegram_service import setup_webhook, get_webhook_url
+    webhook_url = get_webhook_url()
+    if not webhook_url:
+        return JSONResponse({"status": "error", "message": "WEBHOOK_BASE_URL not configured"}, status_code=400)
+    success = await setup_webhook()
+    if success:
+        return {"status": "ok", "webhook_url": webhook_url}
+    return JSONResponse({"status": "error", "message": "Failed to set webhook"}, status_code=500)
 
 
 @app.get("/", tags=["System"])

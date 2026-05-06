@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     # Telegram
     telegram_token: str = ""
     telegram_chat_id: str = ""
+    webhook_base_url: str = ""  # e.g., "https://taskflow-api.onrender.com"
     
     # CORS - keep as string, parse in getter
     cors_origins: str = "http://localhost:5173,http://localhost:3000"

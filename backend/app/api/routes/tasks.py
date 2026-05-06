@@ -303,3 +303,23 @@ async def batch_priority(request: BatchPriorityRequest, x_user_id: str = Header(
     if not result.get("success"):
         raise HTTPException(status_code=500, detail=result.get("error", "Batch operation failed"))
     return result
+
+
+class BatchParseRequest(BaseModel):
+    description: str = Field(..., min_length=1, max_length=5000)
+    project_id: Optional[str] = None
+    user_instructions: Optional[str] = None
+
+
+@router.post("/batch/parse-and-create")
+async def parse_and_create_tasks(request: BatchParseRequest, x_user_id: str = Header(..., alias="X-User-ID")):
+    """Parse natural language into tasks and create them."""
+    from app.services.task_parser import parse_and_create_batch
+
+    result = await parse_and_create_batch(
+        user_id=x_user_id,
+        text=request.description,
+        user_instructions=request.user_instructions,
+        project_id=request.project_id,
+    )
+    return result

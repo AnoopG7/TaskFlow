@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useCallback, type ReactNode } from "react"
 import { cn } from "@/lib/utils"
-import { CheckCircle, XCircle, AlertCircle, X } from "lucide-react"
+import { CheckCircle, XCircle, AlertCircle } from "lucide-react"
 
 type BannerType = "success" | "error" | "info"
 
@@ -10,14 +10,7 @@ interface BannerContextType {
 
 const BannerContext = createContext<BannerContextType | undefined>(undefined)
 
-function Banner() {
-  const [banner, setBanner] = useState<{ type: BannerType; message: string } | null>(null)
-
-  const showBanner = useCallback((type: BannerType, message: string) => {
-    setBanner({ type, message })
-    setTimeout(() => setBanner(null), 3000)
-  }, [])
-
+function Banner({ banner }: { banner: { type: BannerType; message: string } | null }) {
   const icons = {
     success: CheckCircle,
     error: XCircle,
@@ -54,12 +47,13 @@ export function BannerProvider({ children }: { children: ReactNode }) {
 
   return (
     <BannerContext.Provider value={{ showBanner }}>
-      <Banner />
+      <Banner banner={banner} />
       {children}
     </BannerContext.Provider>
   )
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useBanner() {
   const ctx = useContext(BannerContext)
   if (!ctx) throw new Error("useBanner must be inside BannerProvider")
