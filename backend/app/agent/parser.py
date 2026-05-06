@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 class AgentAction(BaseModel):
     """A single action from the agent response."""
-    type: str  # create_task, create_project, complete_task, chat
+    type: str  # create_task, create_project, complete_task, delete_task, delete_tasks, delete_project, delete_all_tasks, delete_all_projects, chat
     data: dict = {}
 
 
@@ -120,9 +120,12 @@ async def execute_actions(parsed: ParsedResponse, user_id: str) -> dict:
         complete_task,
         create_project,
         get_projects,
+        delete_task,
+        delete_project,
+        get_tasks,
     )
 
-    results = {"executed": [], "errors": [], "created_project_ids": {}}
+    results = {"executed": [], "errors": [], "created_project_ids": {}, "deleted_tasks": [], "deleted_projects": []}
 
     for action in parsed.actions:
         try:
@@ -132,7 +135,6 @@ async def execute_actions(parsed: ParsedResponse, user_id: str) -> dict:
                 project_data["status"] = "active"
                 result = await create_project(project_data)
                 if result:
-                    # Store mapping from name -> id for task linking
                     results["created_project_ids"][project_data.get("name", "")] = result.get("id")
                     results["executed"].append({"action": "create_project", "project_id": result.get("id"), "name": project_data.get("name")})
 
@@ -141,13 +143,10 @@ async def execute_actions(parsed: ParsedResponse, user_id: str) -> dict:
                 task_data["user_id"] = user_id
                 task_data["status"] = "pending"
 
-                # Resolve project_name to project_id
                 project_name = task_data.pop("project_name", None)
                 if project_name:
-                    # Check if we just created this project
                     project_id = results["created_project_ids"].get(project_name)
                     if not project_id:
-                        # Search existing projects
                         projects = await get_projects(user_id)
                         for p in projects:
                             if p.get("name", "").lower() == project_name.lower():
@@ -166,6 +165,47 @@ async def execute_actions(parsed: ParsedResponse, user_id: str) -> dict:
                     result = await complete_task(task_id)
                     if result:
                         results["executed"].append({"action": "complete_task", "task_id": task_id})
+
+            elif action.type == "delete_task":
+                task_id = action.data.get("task_id")
+                if task_id:
+                    success = await delete_task(task_id, user_id)
+                    if success:
+                        results["deleted_tasks"].append(task_id)
+                        results["executed"].append({"action": "delete_task", "task_id": task_id})
+
+            elif action.type == "delete_tasks":
+                task_ids = action.data.get("task_ids", [])
+                for tid in task_ids:
+                    success = await delete_task(tid, user_id)
+                    if success:
+                        results["deleted_tasks"].append(tid)
+                        results["executed"].append({"action": "delete_task", "task_id": tid})
+
+            elif action.type == "delete_all_tasks":
+                all_tasks = await get_tasks(user_id)
+                for task in all_tasks:
+                    success = await delete_task(task["id"], user_id)
+                    if success:
+                        results["deleted_tasks"].append(task["id"])
+                        results["executed"].append({"action": "delete_task", "task_id": task["id"]})
+
+            elif action.type == "delete_project":
+                project_id = action.data.get("project_id")
+                if project_id:
+                    cascade = action.data.get("cascade", True)
+                    success = await delete_project(project_id, user_id, cascade)
+                    if success:
+                        results["deleted_projects"].append(project_id)
+                        results["executed"].append({"action": "delete_project", "project_id": project_id})
+
+            elif action.type == "delete_all_projects":
+                all_projects = await get_projects(user_id)
+                for proj in all_projects:
+                    success = await delete_project(proj["id"], user_id, cascade=True)
+                    if success:
+                        results["deleted_projects"].append(proj["id"])
+                        results["executed"].append({"action": "delete_project", "project_id": proj["id"]})
 
         except Exception as e:
             logger.error(f"Error executing action {action.type}: {e}")

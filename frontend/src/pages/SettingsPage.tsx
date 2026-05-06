@@ -198,8 +198,17 @@ export default function SettingsPage() {
                 placeholder="Your Telegram chat ID (optional)"
                 className="w-full rounded-lg bg-background border border-border px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors"
               />
-              <p className="text-xs text-muted-foreground mt-1">
-                Message @userinfobot on Telegram to get your ID
+              <div className="mt-2 p-3 rounded-lg bg-muted/50 border border-border">
+                <p className="text-xs font-medium text-foreground mb-2">How to get your Telegram Chat ID:</p>
+                <ol className="text-xs text-muted-foreground space-y-1.5">
+                  <li>1. Open Telegram and search for <span className="text-primary font-medium">@userinfobot</span></li>
+                  <li>2. Click <span className="text-primary font-medium">Start</span> or send <span className="text-primary font-medium">/start</span></li>
+                  <li>3. Copy your numeric Chat ID (e.g., 6941167090)</li>
+                  <li>4. Paste it here and save</li>
+                </ol>
+              </div>
+              <p className="text-xs text-muted-foreground mt-2">
+                Once linked, you can create tasks and get notifications directly from Telegram.
               </p>
             </div>
           </div>

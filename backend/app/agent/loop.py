@@ -124,21 +124,35 @@ def _build_context(
 
     work_hours_str = f"{work_hours['start']}:00 - {work_hours['end']}:00"
 
-    # Task list
-    task_list = []
-    for t in tasks[:15]:
-        due = t.get("due_date", "No due date")[:16] if t.get("due_date") else "No due date"
-        task_list.append(
-            f"- [{t.get('priority', 'medium')}] {t.get('title')} "
-            f"(status: {t.get('status', 'pending')}, due: {due}, "
-            f"est: {t.get('estimated_hours', '?')}h)"
-        )
-    task_list_str = "\n".join(task_list) if task_list else "No pending tasks"
+    # Build project name lookup
+    project_name_map = {p["id"]: p["name"] for p in projects if "id" in p}
 
-    # Projects list
+    # Task list - show ALL tasks with full details
+    task_list = []
+    for t in tasks[:50]:
+        due = t.get("due_date", "No due date")
+        if due:
+            due = due[:16] if len(due) > 16 else due
+        task_id_short = t.get("id", "?")[:8]
+        project_name = project_name_map.get(t.get("project_id"), "none")
+        task_list.append(
+            f"- ID:{task_id_short} | [{t.get('status', 'pending').upper()}] [{t.get('priority', 'medium').upper()}] "
+            f"{t.get('title')} "
+            f"(due: {due}, est: {t.get('estimated_hours', '?')}h, "
+            f"actual: {t.get('actual_hours', 'N/A')}h, "
+            f"project: {project_name})"
+        )
+    task_summary = f"Total: {len(tasks)} tasks ({len([t for t in tasks if t.get('status') == 'pending'])} pending, {len([t for t in tasks if t.get('status') == 'in_progress'])} in progress, {len([t for t in tasks if t.get('status') == 'completed'])} completed, {len([t for t in tasks if t.get('status') == 'cancelled'])} cancelled)"
+    task_list_str = "\n".join(task_list) if task_list else "No tasks"
+
+    # Projects list - show ALL projects with details
     project_list = []
-    for p in projects[:10]:
-        project_list.append(f"- {p.get('name')} ({p.get('status', 'active')})")
+    for p in projects:
+        project_list.append(
+            f"- ID:{p.get('id', '?')[:8]} | [{p.get('status', 'active').upper()}] [{p.get('color', 'blue')}] "
+            f"{p.get('name')} "
+            f"(created: {p.get('created_at', 'N/A')[:10] if p.get('created_at') else 'N/A'})"
+        )
     project_list_str = "\n".join(project_list) if project_list else "No projects"
 
     # Chat history
@@ -163,10 +177,12 @@ Work hours ({tz}): {work_hours_str}
 Estimation bias: {bias}x
 {custom_str}
 
+{task_summary}
+
 User's current tasks:
 {task_list_str}
 
-User's projects:
+User's projects ({len(projects)} total):
 {project_list_str}
 
 Recent conversation:{history_str}
@@ -199,7 +215,8 @@ async def run_agent(
     profile = await _get_or_create_profile(user_id)
     memory = await _get_or_create_memory(user_id)
 
-    tasks = await get_tasks(user_id, status="pending")
+    # Fetch ALL tasks (not just pending) so agent has full visibility
+    tasks = await get_tasks(user_id)
     projects_list = await get_projects(user_id)
 
     # Get custom agent instructions

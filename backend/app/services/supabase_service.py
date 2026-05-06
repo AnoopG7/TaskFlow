@@ -103,6 +103,20 @@ async def get_user_profile(user_id: str):
     return _profiles.get(user_id)
 
 
+async def get_all_users() -> list[dict]:
+    """Get all user profiles."""
+    client = get_supabase_anon()
+
+    if is_connected() and client:
+        try:
+            result = client.table("user_profiles").select("*").execute()
+            return result.data or []
+        except Exception as e:
+            logger.warning(f"get_all_users error: {e}")
+
+    return list(_profiles.values())
+
+
 async def upsert_user_profile(profile: dict):
     """Create or update user profile."""
     client = get_supabase_service()
@@ -218,20 +232,23 @@ async def complete_task(task_id: str, actual_hours: float = None):
     return await update_task(task_id, update_data)
 
 
-async def delete_task(task_id: str) -> bool:
-    """Delete a task."""
+async def delete_task(task_id: str, user_id: str | None = None) -> bool:
+    """Delete a task. Validates ownership if user_id provided."""
     client = get_supabase_service()
 
     if is_connected() and client:
         try:
-            result = client.table("tasks").delete().eq("id", task_id).execute()
+            query = client.table("tasks").delete().eq("id", task_id)
+            if user_id:
+                query = query.eq("user_id", user_id)
+            result = query.execute()
             return bool(result.data)
         except Exception as e:
             logger.warning(f"delete_task error: {e}")
 
     for tasks in _tasks.values():
         for i, t in enumerate(tasks):
-            if t.get("id") == task_id:
+            if t.get("id") == task_id and (user_id is None or t.get("user_id") == user_id):
                 tasks.pop(i)
                 return True
     return False

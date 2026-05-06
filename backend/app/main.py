@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: initialize services. Shutdown: cleanup."""
-    from app.services.supabase_service import init_supabase
-    from app.services.scheduler import start_scheduler, stop_scheduler
+    from app.services.supabase_service import init_supabase, get_all_users
+    from app.services.scheduler import start_scheduler, stop_scheduler, setup_user_schedules
 
     logger.info("🚀 TaskFlow starting up...")
 
@@ -30,14 +30,24 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Supabase connection: {e}")
 
-    # Start scheduler (only in production)
+    # Start scheduler
     settings = get_settings()
-    if settings.environment == "production":
-        try:
-            await start_scheduler()
-            logger.info("✅ Scheduler started")
-        except Exception as e:
-            logger.warning(f"Scheduler failed to start: {e}")
+    try:
+        await start_scheduler()
+        logger.info("✅ Scheduler started")
+    except Exception as e:
+        logger.warning(f"Scheduler failed to start: {e}")
+
+    # Setup schedules for all users (due date checks, etc.)
+    try:
+        all_users = await get_all_users()
+        for user in all_users:
+            user_id = user.get("user_id")
+            if user_id:
+                await setup_user_schedules(user_id)
+        logger.info(f"✅ Schedules setup for {len(all_users)} users")
+    except Exception as e:
+        logger.warning(f"User schedules setup failed: {e}")
 
     # Setup Telegram
     try:
@@ -47,7 +57,6 @@ async def lifespan(app: FastAPI):
             if await setup_webhook():
                 logger.info(f"✅ Telegram webhook configured")
         else:
-            # Local dev - use polling mode instead of webhook
             import asyncio
             asyncio.create_task(start_polling())
             logger.info("📱 Telegram polling started (local dev mode)")
@@ -59,8 +68,7 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     try:
-        if settings.environment == "production":
-            await stop_scheduler()
+        await stop_scheduler()
     except Exception as e:
         logger.warning(f"Scheduler shutdown: {e}")
     logger.info("🛑 TaskFlow shutting down")

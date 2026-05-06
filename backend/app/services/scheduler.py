@@ -4,7 +4,7 @@ Handles morning briefs, evening debriefs, risk detection, and overload warnings.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -134,6 +134,94 @@ Summary with top 3 + motivation (under 100w)"""
         logger.error(f"Error generating morning brief: {e}")
 
 
+async def check_due_date_notifications(user_id: str):
+    """Check for tasks due within 24 hours and send Telegram notification."""
+    from app.services.supabase_service import (
+        get_agent_preferences, get_tasks, get_user_profile,
+    )
+    from app.services.telegram_service import send_message
+
+    logger.info(f"⏰ Checking due date notifications for {user_id}")
+
+    try:
+        prefs = await get_agent_preferences(user_id)
+        telegram_chat_id = prefs.get("telegram_chat_id")
+        if not telegram_chat_id:
+            return
+
+        profile = await get_user_profile(user_id)
+        tasks = await get_tasks(user_id)
+
+        now = datetime.now(timezone.utc)
+        due_soon = []
+        overdue = []
+
+        for task in tasks:
+            if task.get("status") in ("completed", "cancelled"):
+                continue
+            due_date = task.get("due_date")
+            if not due_date:
+                continue
+            try:
+                due_dt = datetime.fromisoformat(due_date.replace("Z", "+00:00"))
+                if due_dt < now:
+                    overdue.append(task)
+                elif (due_dt - now).total_seconds() <= 24 * 3600:
+                    due_soon.append(task)
+            except (ValueError, TypeError):
+                continue
+
+        if not overdue and not due_soon:
+            return
+
+        message = f"⏰ *Task Reminder for {profile.get('name', 'User')}*\n\n"
+
+        if overdue:
+            message += "🔴 *OVERDUE:*\n"
+            for t in overdue:
+                due = t.get("due_date", "?")[:16]
+                message += f"• {t['title']} (was due: {due})\n"
+            message += "\n"
+
+        if due_soon:
+            message += "🟡 *DUE WITHIN 24 HOURS:*\n"
+            for t in due_soon:
+                due = t.get("due_date", "?")[:16]
+                message += f"• {t['title']} (due: {due})\n"
+            message += "\n"
+
+        message += f"Total: {len(overdue)} overdue, {len(due_soon)} due soon. Stay focused! 💪"
+
+        await send_message(str(telegram_chat_id), message, parse_mode="Markdown")
+        logger.info(f"✅ Due date notification sent to {user_id}")
+
+    except Exception as e:
+        logger.error(f"Error in due date notification for {user_id}: {e}")
+
+
+async def schedule_due_date_check(user_id: str) -> str:
+    """Schedule hourly due date check for user."""
+    if not scheduler.scheduler:
+        logger.warning("Scheduler not started")
+        return ""
+
+    try:
+        job = scheduler.scheduler.add_job(
+            check_due_date_notifications,
+            CronTrigger(hour="*/1"),
+            args=[user_id],
+            id=f"due_date_check_{user_id}",
+            replace_existing=True,
+        )
+
+        logger.info(f"✅ Due date check scheduled for {user_id} (every hour)")
+        return job.id
+
+    except Exception as e:
+        logger.error(f"Error scheduling due date check: {e}")
+        return ""
+
+
 async def setup_user_schedules(user_id: str):
     """Setup scheduled tasks for a user."""
     from app.services.supabase_service import get_agent_preferences
@@ -145,6 +233,8 @@ async def setup_user_schedules(user_id: str):
 
         if prefs.get("enable_morning_brief"):
             await scheduler.schedule_morning_brief(user_id, prefs.get("morning_brief_time", "07:00"))
+
+        await schedule_due_date_check(user_id)
 
         logger.info(f"✅ Schedules setup for {user_id}")
 
