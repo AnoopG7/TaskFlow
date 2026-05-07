@@ -104,7 +104,7 @@ export default function TasksPage() {
       if (filter === "overdue") return t.status !== "completed" && t.due_date && new Date(t.due_date) < new Date()
       return taskPriorities.includes(filter as (typeof taskPriorities)[number]) && t.priority === filter
     })
-    .filter((t) => !searchQuery || t.title.toLowerCase().includes(searchQuery.toLowerCase()))
+    .filter((t) => !searchQuery || t.title.toLowerCase().includes(searchQuery.toLowerCase()) || (t.description || "").toLowerCase().includes(searchQuery.toLowerCase()))
     .sort((a, b) => {
       // Active tasks first, then by priority weight, then by due date
       const statusOrder: Record<string, number> = { in_progress: 0, pending: 1, completed: 2, cancelled: 3 }

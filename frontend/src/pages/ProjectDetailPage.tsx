@@ -191,7 +191,7 @@ export default function ProjectDetailPage() {
       if (taskFilter === "cancelled") return t.status === "cancelled"
       return true
     })
-    .filter((t) => !searchQuery || t.title.toLowerCase().includes(searchQuery.toLowerCase()))
+    .filter((t) => !searchQuery || t.title.toLowerCase().includes(searchQuery.toLowerCase()) || (t.description || "").toLowerCase().includes(searchQuery.toLowerCase()))
     .sort((a, b) => {
       if (a.status !== b.status) return a.status === "pending" || a.status === "in_progress" ? -1 : 1
       const pw: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 }

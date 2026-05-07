@@ -180,8 +180,23 @@ async def get_task(task_id: str):
 
 
 async def create_task(task_data: dict):
-    """Create a new task."""
+    """Create a new task. Checks for duplicates by title + user_id + date."""
     client = get_supabase_service()
+
+    # Check for duplicates: same title, user, and date
+    user_id = task_data.get("user_id")
+    title = task_data.get("title", "").lower().strip()
+    
+    if user_id and title and is_connected() and client:
+        try:
+            today = datetime.now().strftime("%Y-%m-%d")
+            result = client.table("tasks").select("id, title").eq("user_id", user_id).eq("status", "pending").execute()
+            for existing in result.data:
+                if existing.get("title", "").lower().strip() == title:
+                    logger.info(f"Duplicate task detected: {title}")
+                    return existing  # Return existing instead of creating new
+        except Exception as e:
+            logger.warning(f"Duplicate check error: {e}")
 
     if "id" not in task_data:
         task_data["id"] = str(uuid.uuid4())
@@ -193,7 +208,6 @@ async def create_task(task_data: dict):
         except Exception as e:
             logger.warning(f"create_task error: {e}")
 
-    user_id = task_data.get("user_id")
     if user_id not in _tasks:
         _tasks[user_id] = []
     _tasks[user_id].append(task_data)
@@ -273,7 +287,7 @@ async def search_tasks(user_id: str, query: str, exclude_project_id: str | None 
                 .limit(30)
             )
             if exclude_project_id:
-                q = q.neq("project_id", exclude_project_id)
+                q = q.or_(f"project_id.is.null,project_id.neq.{exclude_project_id}")
             result = q.execute()
 
             # Also search by description (separate query, merge results)
@@ -285,7 +299,7 @@ async def search_tasks(user_id: str, query: str, exclude_project_id: str | None 
                 .limit(30)
             )
             if exclude_project_id:
-                q2 = q2.neq("project_id", exclude_project_id)
+                q2 = q2.or_(f"project_id.is.null,project_id.neq.{exclude_project_id}")
             result2 = q2.execute()
 
             # Merge and deduplicate

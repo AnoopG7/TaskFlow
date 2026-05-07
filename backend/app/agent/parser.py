@@ -123,6 +123,8 @@ async def execute_actions(parsed: ParsedResponse, user_id: str) -> dict:
         delete_task,
         delete_project,
         get_tasks,
+        link_tasks_to_project,
+        unlink_task_from_project,
     )
 
     results = {"executed": [], "errors": [], "created_project_ids": {}, "deleted_tasks": [], "deleted_projects": []}
@@ -206,6 +208,25 @@ async def execute_actions(parsed: ParsedResponse, user_id: str) -> dict:
                     if success:
                         results["deleted_projects"].append(proj["id"])
                         results["executed"].append({"action": "delete_project", "project_id": proj["id"]})
+
+            elif action.type == "link_task_to_project":
+                task_id = action.data.get("task_id")
+                project_id = action.data.get("project_id")
+                if task_id and project_id:
+                    success = await link_tasks_to_project(project_id, [task_id], user_id)
+                    if success.get("success"):
+                        results["executed"].append({"action": "link_task_to_project", "task_id": task_id, "project_id": project_id})
+                    else:
+                        results["errors"].append({"action": "link_task_to_project", "error": success.get("error", "Failed to link task")})
+
+            elif action.type == "unlink_task":
+                task_id = action.data.get("task_id")
+                if task_id:
+                    success = await unlink_task_from_project(task_id, user_id)
+                    if success:
+                        results["executed"].append({"action": "unlink_task", "task_id": task_id})
+                    else:
+                        results["errors"].append({"action": "unlink_task", "error": "Failed to unlink task"})
 
         except Exception as e:
             logger.error(f"Error executing action {action.type}: {e}")

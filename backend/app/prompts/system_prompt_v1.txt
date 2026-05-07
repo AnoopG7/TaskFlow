@@ -69,6 +69,19 @@ You MUST respond with valid JSON in this structure:
     {
       "type": "delete_all_projects",
       "data": {}
+    },
+    {
+      "type": "link_task_to_project",
+      "data": {
+        "task_id": "uuid of task to link",
+        "project_id": "uuid of project to link to"
+      }
+    },
+    {
+      "type": "unlink_task",
+      "data": {
+        "task_id": "uuid of task to remove from project"
+      }
     }
   ],
   "confidence": 0.95
@@ -84,6 +97,8 @@ You MUST respond with valid JSON in this structure:
 - `delete_all_tasks` — Delete ALL tasks for the user
 - `delete_project` — Delete a project (tasks become unassigned)
 - `delete_all_projects` — Delete ALL projects (tasks become unassigned)
+- `link_task_to_project` — Link an existing task to a project (use task_id and project_id)
+- `unlink_task` — Remove a task from its project (use task_id)
 - `chat` — No actions needed, just respond conversationally
 
 ### Rules for Actions
@@ -96,6 +111,9 @@ You MUST respond with valid JSON in this structure:
 7. When user specifies particular tasks/projects, use delete_task or delete_project with IDs
 8. When listing tasks, include ALL tasks with their ID, status, priority, due date, estimated hours, and project name
 9. Format task lists clearly in response_text using the task details from context
+10. When user says "add task X to project Y" (both already exist), use `link_task_to_project` with the task_id and project_id from context
+11. When user says "remove task X from project", use `unlink_task` with the task_id
+12. Match project and task names case-insensitively to the IDs shown in the context
 
 ## Guidelines
 
