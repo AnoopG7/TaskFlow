@@ -17,11 +17,10 @@ class Settings(BaseSettings):
     
     # Telegram
     telegram_token: str = ""
-    telegram_chat_id: str = ""
-    webhook_base_url: str = ""  # e.g., "https://taskflow-api.onrender.com"
+    webhook_base_url: str = ""  # Set in Render dashboard (e.g., https://your-app.onrender.com)
     
-    # CORS - keep as string, parse in getter
-    cors_origins: str = "http://localhost:5173,http://localhost:3000"
+    # CORS - set in Render dashboard
+    cors_origins: str = ""
     
     # Environment
     environment: str = "development"
@@ -33,8 +32,8 @@ class Settings(BaseSettings):
     
     def get_cors_origins(self) -> list[str]:
         if not self.cors_origins:
-            return ["http://localhost:5173", "http://localhost:3000"]
-        return [url.strip() for url in self.cors_origins.split(",")]
+            return ["http://localhost:5173"]
+        return [url.strip() for url in self.cors_origins.split(",") if url.strip()]
 
 
 @lru_cache()

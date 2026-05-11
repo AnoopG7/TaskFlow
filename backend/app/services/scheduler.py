@@ -1,13 +1,16 @@
 """
 APScheduler-based task scheduler for proactive agent actions.
 Handles morning briefs, evening debriefs, risk detection, and overload warnings.
+All times are in the user's local timezone.
 """
 
 import logging
+import pytz
 from datetime import datetime, timezone
 from typing import Optional
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from app.utils.timezone_utils import resolve_timezone, get_pytz_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -36,24 +39,25 @@ class TaskScheduler:
             self.scheduler.shutdown()
             logger.info("⏹️ Task scheduler stopped")
 
-    async def schedule_morning_brief(self, user_id: str, time_str: str) -> str:
-        """Schedule daily morning brief for user."""
+    async def schedule_morning_brief(self, user_id: str, time_str: str, user_timezone: str) -> str:
+        """Schedule daily morning brief for user in their local timezone."""
         if not self.scheduler:
             logger.warning("Scheduler not started")
             return ""
 
         try:
             hour, minute = map(int, time_str.split(":"))
+            tz = get_pytz_timezone(user_timezone)
 
             job = self.scheduler.add_job(
                 send_morning_brief,
-                CronTrigger(hour=hour, minute=minute),
+                CronTrigger(hour=hour, minute=minute, timezone=tz),
                 args=[user_id],
                 id=f"morning_brief_{user_id}",
                 replace_existing=True,
             )
 
-            logger.info(f"✅ Morning brief scheduled for {user_id} at {time_str}")
+            logger.info(f"✅ Morning brief scheduled for {user_id} at {time_str} ({resolve_timezone(user_timezone)})")
             return job.id
 
         except Exception as e:
@@ -152,7 +156,11 @@ async def check_due_date_notifications(user_id: str):
         profile = await get_user_profile(user_id)
         tasks = await get_tasks(user_id)
 
-        now = datetime.now(timezone.utc)
+        # Use user's local timezone for comparison
+        user_tz_str = profile.get("timezone") if profile else None
+        user_tz = get_pytz_timezone(user_tz_str)
+        now = datetime.now(user_tz)
+
         due_soon = []
         overdue = []
 
@@ -164,9 +172,11 @@ async def check_due_date_notifications(user_id: str):
                 continue
             try:
                 due_dt = datetime.fromisoformat(due_date.replace("Z", "+00:00"))
-                if due_dt < now:
+                # Convert UTC to user's timezone
+                due_local = due_dt.astimezone(user_tz)
+                if due_local < now:
                     overdue.append(task)
-                elif (due_dt - now).total_seconds() <= 24 * 3600:
+                elif (due_local - now).total_seconds() <= 24 * 3600:
                     due_soon.append(task)
             except (ValueError, TypeError):
                 continue
@@ -199,22 +209,23 @@ async def check_due_date_notifications(user_id: str):
         logger.error(f"Error in due date notification for {user_id}: {e}")
 
 
-async def schedule_due_date_check(user_id: str) -> str:
-    """Schedule hourly due date check for user."""
+async def schedule_due_date_check(user_id: str, user_timezone: str) -> str:
+    """Schedule hourly due date check for user in their local timezone."""
     if not scheduler.scheduler:
         logger.warning("Scheduler not started")
         return ""
 
     try:
+        tz = get_pytz_timezone(user_timezone)
         job = scheduler.scheduler.add_job(
             check_due_date_notifications,
-            CronTrigger(hour="*/1"),
+            CronTrigger(hour="*/1", timezone=tz),
             args=[user_id],
             id=f"due_date_check_{user_id}",
             replace_existing=True,
         )
 
-        logger.info(f"✅ Due date check scheduled for {user_id} (every hour)")
+        logger.info(f"✅ Due date check scheduled for {user_id} (every hour, {resolve_timezone(user_timezone)})")
         return job.id
 
     except Exception as e:
@@ -224,19 +235,23 @@ async def schedule_due_date_check(user_id: str) -> str:
 
 async def setup_user_schedules(user_id: str):
     """Setup scheduled tasks for a user."""
-    from app.services.supabase_service import get_agent_preferences
+    from app.services.supabase_service import get_agent_preferences, get_user_profile
 
     logger.info(f"Setting up schedules for {user_id}")
 
     try:
         prefs = await get_agent_preferences(user_id)
+        profile = await get_user_profile(user_id)
+
+        # Get user's timezone from profile, resolve to valid IANA name
+        user_tz = resolve_timezone(profile.get("timezone")) if profile else "UTC"
 
         if prefs.get("enable_morning_brief"):
-            await scheduler.schedule_morning_brief(user_id, prefs.get("morning_brief_time", "07:00"))
+            await scheduler.schedule_morning_brief(user_id, prefs.get("morning_brief_time", "07:00"), user_tz)
 
-        await schedule_due_date_check(user_id)
+        await schedule_due_date_check(user_id, user_tz)
 
-        logger.info(f"✅ Schedules setup for {user_id}")
+        logger.info(f"✅ Schedules setup for {user_id} (timezone: {user_tz})")
 
     except Exception as e:
         logger.error(f"Error setting up schedules: {e}")

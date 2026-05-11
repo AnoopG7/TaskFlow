@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import logging
+import os
 
 from app.config import get_settings
 from app.api.routes import tasks, agent, auth, projects
@@ -31,7 +32,6 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Supabase connection: {e}")
 
     # Start scheduler
-    settings = get_settings()
     try:
         await start_scheduler()
         logger.info("✅ Scheduler started")
@@ -103,18 +103,15 @@ async def telegram_webhook(request: Request):
     """Handle incoming Telegram updates."""
     try:
         body = await request.json()
-        from app.services.telegram_service import handle_webhook_update
+        from app.services.telegram_service import handle_webhook_update, send_message
         
         result = await handle_webhook_update(body)
-        
         action = result.get("action")
         
         if action == "respond":
-            from app.services.telegram_service import send_message
-            await send_message(
-                chat_id=result["chat_id"],
-                text=result["message"],
-            )
+            await send_message(chat_id=result["chat_id"], text=result["message"])
+        elif action == "welcome":
+            await send_message(chat_id=result["chat_id"], text=result["message"])
         
         return JSONResponse({"status": "ok"})
     
@@ -160,4 +157,5 @@ async def root():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+    port = int(os.getenv("PORT", "8000"))
+    uvicorn.run("app.main:app", host="0.0.0.0", port=port, reload=False)

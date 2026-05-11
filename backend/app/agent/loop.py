@@ -29,9 +29,10 @@ settings = get_settings()
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
 
-def _get_current_date() -> str:
-    """Get current date and time in ISO format."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+def _get_current_date(tz_str: str | None = "UTC") -> str:
+    """Get current date and time in user's local timezone."""
+    from app.utils.timezone_utils import format_local_time
+    return format_local_time(tz_str)
 
 
 def _load_prompt_template() -> str:
@@ -59,7 +60,7 @@ async def _get_or_create_profile(user_id: str) -> dict:
     default = {
         "user_id": user_id,
         "name": "User",
-        "timezone": "IST",
+        "timezone": "UTC",
         "work_hours": {"start": 9, "end": 17},
         "notification_channels": {"primary": "telegram", "secondary": "email"},
         "do_not_disturb": {"enabled": False, "start": "20:00", "end": "08:00"},
@@ -116,11 +117,13 @@ def _build_context(
     trigger_type: str | None = None,
 ) -> list[dict]:
     """Build the full prompt context for a single LLM call."""
+    from app.utils.timezone_utils import resolve_timezone
+
     name = profile.get("name", "User")
     work_hours = profile.get("work_hours", {"start": 9, "end": 17})
-    tz = profile.get("timezone", "IST")
+    tz = resolve_timezone(profile.get("timezone"))
     bias = memory.get("estimation_bias", 1.0)
-    current_date = _get_current_date()
+    current_date = _get_current_date(tz)
 
     work_hours_str = f"{work_hours['start']}:00 - {work_hours['end']}:00"
 
@@ -171,7 +174,7 @@ def _build_context(
     system_content = f"""{PROMPT_TEMPLATE}
 
 User's name: {name}
-Current date & time (UTC): {current_date}
+Current date & time ({tz}): {current_date}
 User timezone: {tz}
 Work hours ({tz}): {work_hours_str}
 Estimation bias: {bias}x
@@ -297,17 +300,17 @@ async def run_agent(
         "response": parsed.response_text or response_text,
         "actions": {
             **parsed.model_dump(),
-            "execution_results": action_results,
+            **action_results,
         },
         "session_id": retrieved_session_id,
     }
 
 
 async def run_morning_brief(user_id: str) -> dict:
-    """Generate and return morning brief."""
+    """Generate a morning brief for the user."""
     return await run_agent(user_id, trigger_type="morning_brief")
 
 
 async def run_evening_debrief(user_id: str) -> dict:
-    """Generate and return evening debrief."""
+    """Generate an evening debrief for the user."""
     return await run_agent(user_id, trigger_type="evening_debrief")

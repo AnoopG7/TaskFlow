@@ -8,7 +8,23 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 
 _bot: Bot | None = None
-_cached_chats: dict[str, str] = {}
+_processed_message_ids: set[int] = set()
+MAX_PROCESSED_CACHE = 1000
+
+
+def _is_already_processed(message_id: int) -> bool:
+    """Check if message was already processed (deduplication)."""
+    if message_id in _processed_message_ids:
+        return True
+    return False
+
+
+def _mark_processed(message_id: int):
+    """Mark message as processed."""
+    _processed_message_ids.add(message_id)
+    if len(_processed_message_ids) > MAX_PROCESSED_CACHE:
+        while len(_processed_message_ids) > MAX_PROCESSED_CACHE:
+            _processed_message_ids.pop()
 
 
 def _get_bot() -> Bot | None:
@@ -27,17 +43,7 @@ def _get_bot() -> Bot | None:
 
 
 async def send_message(chat_id: str, text: str, parse_mode: str = "Markdown") -> bool:
-    """
-    Send a message via Telegram.
-    
-    Args:
-        chat_id: Telegram chat ID
-        text: Message text
-        parse_mode: Parse mode (Markdown or HTML)
-    
-    Returns:
-        True if sent successfully
-    """
+    """Send a message via Telegram."""
     bot = _get_bot()
     if not bot:
         logger.warning("Telegram not configured, skipping message")
@@ -57,24 +63,6 @@ async def send_message(chat_id: str, text: str, parse_mode: str = "Markdown") ->
         return False
     except Exception as e:
         logger.error(f"Failed to send Telegram message: {e}")
-        return False
-
-
-async def send_photo(chat_id: str, photo_url: str, caption: str | None = None) -> bool:
-    """Send a photo via Telegram."""
-    bot = _get_bot()
-    if not bot:
-        return False
-    
-    try:
-        await bot.send_photo(
-            chat_id=chat_id,
-            photo=photo_url,
-            caption=caption,
-        )
-        return True
-    except Exception as e:
-        logger.error(f"Failed to send photo: {e}")
         return False
 
 
@@ -110,31 +98,8 @@ async def setup_webhook() -> bool:
     return await set_webhook(webhook_url)
 
 
-async def get_me() -> dict | None:
-    """Get bot information."""
-    bot = _get_bot()
-    if not bot:
-        return None
-    
-    try:
-        me = await bot.get_me()
-        return {
-            "id": me.id,
-            "username": me.username,
-            "first_name": me.first_name,
-        }
-    except Exception as e:
-        logger.error(f"Failed to get bot info: {e}")
-        return None
-
-
 async def handle_webhook_update(update: dict) -> dict:
-    """
-    Handle incoming Telegram webhook updates.
-    
-    Returns:
-        Response dict with action to take
-    """
+    """Handle incoming Telegram webhook updates."""
     from app.agent.loop import run_agent
     from app.services.supabase_service import get_supabase_anon
     
@@ -144,11 +109,18 @@ async def handle_webhook_update(update: dict) -> dict:
     message = update["message"]
     chat = message.get("chat", {})
     text = message.get("text", "")
+    message_id = message.get("message_id")
     
     chat_id = str(chat.get("id"))
     
-    # ✅ Look up the real user by their telegram_chat_id
-    # Try user_profiles first, then agent_preferences as fallback
+    # Deduplication: skip if already processed this message_id
+    if message_id:
+        if message_id in _processed_message_ids:
+            logger.info(f"Skipping duplicate message_id: {message_id}")
+            return {"action": "ignore", "reason": "duplicate"}
+        _mark_processed(message_id)
+    
+    # Look up the real user by their telegram_chat_id
     user_id: str | None = None
     db = get_supabase_anon()
     
@@ -161,7 +133,6 @@ async def handle_webhook_update(update: dict) -> dict:
         }
     
     try:
-        # Query user_profiles table
         result = db.table("user_profiles").select("user_id").eq("telegram_chat_id", chat_id).execute()
         
         if result.data and len(result.data) > 0:
@@ -257,10 +228,7 @@ Example: *"Create a task to review PR 456, high priority, due tomorrow"*""",
 
 
 async def start_polling():
-    """
-    Poll Telegram for updates (for local development).
-    This is used instead of webhooks when running locally without HTTPS.
-    """
+    """Poll Telegram for updates (for local development)."""
     from app.services.supabase_service import get_supabase_anon
     
     bot = _get_bot()

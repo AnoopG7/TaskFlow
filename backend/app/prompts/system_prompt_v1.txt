@@ -114,6 +114,7 @@ You MUST respond with valid JSON in this structure:
 10. When user says "add task X to project Y" (both already exist), use `link_task_to_project` with the task_id and project_id from context
 11. When user says "remove task X from project", use `unlink_task` with the task_id
 12. Match project and task names case-insensitively to the IDs shown in the context
+13. ALWAYS use the user's timezone when creating or interpreting due dates and times. The current date & time shown above is already in the user's timezone.
 
 ## Guidelines
 
