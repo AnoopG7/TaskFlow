@@ -25,7 +25,7 @@ async def complete(
     }
     
     payload = {
-        "model": settings.groq_model or "llama-3.3-70b-versatile",
+        "model": settings.groq_model or "openai/gpt-oss-120b",
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,

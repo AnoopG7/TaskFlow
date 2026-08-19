@@ -10,7 +10,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![React](https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev)
 [![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL-3FCF8E?style=for-the-badge&logo=supabase&logoColor=white)](https://supabase.com)
-[![Groq](https://img.shields.io/badge/Groq-LLaMA_3.3_70B-FF6B00?style=for-the-badge&logoColor=white)](https://groq.com)
+[![Groq](https://img.shields.io/badge/Groq-GPT_OSS_120B-FF6B00?style=for-the-badge&logoColor=white)](https://groq.com)
 
 </div>
 
@@ -70,7 +70,7 @@ User: "Create a project called 'Exam Prep' and add 3 study tasks due next week"
 │     • Compute local date/time in user's timezone        │
 │                                                         │
 │  2. SINGLE GROQ LLM CALL                                │
-│     Model: llama-3.3-70b-versatile                      │
+│     Model: openai/gpt-oss-120b                           │
 │     Temperature: 0.7 | Max tokens: 1500                 │
 │                                                         │
 │  3. PARSE STRUCTURED RESPONSE                           │
@@ -278,7 +278,7 @@ Every task status transition is validated against a formal state machine with a 
 | Styling | TailwindCSS 4 + OKLCH design tokens | Custom light/dark themes |
 | Forms | react-hook-form + Zod | Schema validation |
 | Backend | FastAPI + Python 3.12 | REST API |
-| LLM | Groq `llama-3.3-70b-versatile` | Agent + NL parsing |
+| LLM | Groq `openai/gpt-oss-120b` | Agent + NL parsing |
 | Database | Supabase PostgreSQL | 10 tables + materialized view |
 | Auth | Supabase Auth | JWT authentication |
 | Scheduler | APScheduler AsyncIO | Cron-based proactive tasks |

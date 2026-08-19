@@ -139,7 +139,31 @@ async def signup(req: SignupRequest):
                 name=req.name,
             )
 
-        # Email confirmation required
+        # Email confirmation required — try auto-confirm via admin API
+        try:
+            admin_client.auth.admin.update_user_by_id(
+                user_id,
+                attributes={"email_confirm": True},
+            )
+            logger.info("Auto-confirmed user: %s", user_id)
+
+            # Re-sign in to get a valid session token
+            auto_login = auth_client.auth.sign_in_with_password({
+                "email": req.email,
+                "password": req.password,
+            })
+            if auto_login.session:
+                return SignupResponse(
+                    status="logged_in",
+                    message="Account created successfully!",
+                    user_id=user_id,
+                    token=auto_login.session.access_token,
+                    name=req.name,
+                )
+        except Exception as confirm_error:
+            logger.warning("Auto-confirm failed: %s", confirm_error)
+
+        # Fallback — email confirmation still needed
         return SignupResponse(
             status="confirm_email",
             message="Account created! Please check your email to verify your account.",
