@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from "react"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
+import { STATUS_LABEL, STATUS_STYLE } from "@/lib/taxonomy"
 import { ChevronDown, Loader2 } from "lucide-react"
 
 interface TaskStatusSelectorProps {
@@ -8,20 +9,6 @@ interface TaskStatusSelectorProps {
   currentStatus: string
   onStatusChange?: (newStatus: string) => void
   disabled?: boolean
-}
-
-const statusStyles: Record<string, { bg: string; dot: string; text: string }> = {
-  pending: { bg: "bg-slate-100 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700", dot: "bg-slate-500", text: "text-slate-700 dark:text-slate-300" },
-  in_progress: { bg: "bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800", dot: "bg-blue-500", text: "text-blue-700 dark:text-blue-300" },
-  completed: { bg: "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800", dot: "bg-emerald-500", text: "text-emerald-700 dark:text-emerald-300" },
-  cancelled: { bg: "bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-800", dot: "bg-red-500", text: "text-red-700 dark:text-red-300" },
-}
-
-const statusLabels: Record<string, string> = {
-  pending: "Pending",
-  in_progress: "In Progress",
-  completed: "Completed",
-  cancelled: "Cancelled",
 }
 
 export default function TaskStatusSelector({
@@ -36,17 +23,18 @@ export default function TaskStatusSelector({
   const [updating, setUpdating] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
-  // Click outside to close
   useEffect(() => {
+    if (!isOpen) return
     const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setIsOpen(false)
-      }
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setIsOpen(false)
     }
-    if (isOpen) {
-      document.addEventListener("mousedown", handleClickOutside)
+    const handleKey = (e: KeyboardEvent) => e.key === "Escape" && setIsOpen(false)
+    document.addEventListener("mousedown", handleClickOutside)
+    document.addEventListener("keydown", handleKey)
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside)
+      document.removeEventListener("keydown", handleKey)
     }
-    return () => document.removeEventListener("mousedown", handleClickOutside)
   }, [isOpen])
 
   // Load allowed transitions when opened
@@ -73,7 +61,6 @@ export default function TaskStatusSelector({
       await api.updateTask(taskId, { status: newStatus })
       onStatusChange?.(newStatus)
       setIsOpen(false)
-      // Reset allowed transitions since status changed
       setAllowedStatuses([])
     } catch {
       // Error handled by parent
@@ -82,61 +69,62 @@ export default function TaskStatusSelector({
     }
   }
 
-  const style = statusStyles[currentStatus] || statusStyles.pending
+  const style = STATUS_STYLE[currentStatus] || STATUS_STYLE.pending
 
   return (
     <div className="relative inline-block" ref={containerRef}>
-      {/* Compact pill button */}
       <button
+        type="button"
         onClick={handleOpen}
         disabled={disabled || updating}
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
+        aria-label={`Status: ${STATUS_LABEL[currentStatus] || currentStatus}. Change status`}
         className={cn(
-          "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-all",
-          style.bg, style.text,
-          disabled && "opacity-50 cursor-not-allowed",
-          !disabled && "hover:shadow-sm cursor-pointer",
-          isOpen && "ring-2 ring-primary/30"
+          "flex h-7 items-center gap-1.5 rounded-full px-2.5 text-[12px] font-medium transition-[filter]",
+          style.bg,
+          style.text,
+          disabled ? "cursor-not-allowed opacity-50" : "hover:brightness-95 dark:hover:brightness-125"
         )}
       >
         <span className={cn("h-1.5 w-1.5 rounded-full", style.dot)} />
-        {statusLabels[currentStatus] || currentStatus}
+        {STATUS_LABEL[currentStatus] || currentStatus}
         {updating ? (
           <Loader2 className="h-3 w-3 animate-spin" />
         ) : (
-          <ChevronDown className={cn("h-3 w-3 transition-transform", isOpen && "rotate-180")} />
+          <ChevronDown className={cn("h-3 w-3 opacity-70 transition-transform", isOpen && "rotate-180")} />
         )}
       </button>
 
-      {/* Dropdown */}
       {isOpen && !disabled && (
-        <div className="absolute top-full left-0 mt-1 z-50 rounded-lg border border-border bg-card shadow-lg overflow-hidden animate-fade-in min-w-[160px]">
+        <div
+          role="menu"
+          className="absolute left-0 top-full z-40 mt-1.5 sm:left-auto sm:right-0 min-w-[168px] overflow-hidden rounded-md border border-rule bg-sheet py-1 shadow-[0_12px_32px_-8px_rgba(16,20,29,.25)] animate-scale-in"
+        >
+          <p className="px-3 pt-1.5 pb-1 text-[12px] text-ink-faint">Move to</p>
           {loading ? (
-            <div className="flex items-center justify-center py-4">
-              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+            <div className="flex items-center justify-center py-3">
+              <Loader2 className="h-4 w-4 animate-spin text-ink-soft" />
             </div>
           ) : allowedStatuses.length === 0 ? (
-            <div className="px-3 py-2.5 text-xs text-muted-foreground text-center">
-              No transitions available
-            </div>
+            <p className="px-3 py-2 text-[13px] text-ink-soft">No other status available</p>
           ) : (
-            <div className="py-1">
-              {allowedStatuses.map((status) => {
-                const s = statusStyles[status] || statusStyles.pending
-                return (
-                  <button
-                    key={status}
-                    onClick={() => handleStatusChange(status)}
-                    disabled={updating}
-                    className="w-full text-left px-3 py-2 text-sm transition-colors hover:bg-muted disabled:opacity-50 flex items-center gap-2"
-                  >
-                    <span className={cn("h-2 w-2 rounded-full", s.dot)} />
-                    <span className={cn("font-medium text-xs", s.text)}>
-                      {statusLabels[status] || status}
-                    </span>
-                  </button>
-                )
-              })}
-            </div>
+            allowedStatuses.map((status) => {
+              const s = STATUS_STYLE[status] || STATUS_STYLE.pending
+              return (
+                <button
+                  key={status}
+                  role="menuitem"
+                  type="button"
+                  onClick={() => handleStatusChange(status)}
+                  disabled={updating}
+                  className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] text-ink transition-colors hover:bg-wash disabled:opacity-50"
+                >
+                  <span className={cn("h-2 w-2 rounded-full", s.dot)} />
+                  {STATUS_LABEL[status] || status}
+                </button>
+              )
+            })
           )}
         </div>
       )}

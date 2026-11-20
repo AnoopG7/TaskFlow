@@ -3,49 +3,30 @@ import { useSearchParams } from "react-router-dom"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useAuth } from "@/providers/AuthProvider"
+import { useBanner } from "@/providers/BannerProvider"
 import { api, type Task } from "@/lib/api"
 import { taskCreateSchema, taskPriorities } from "@/lib/schemas"
 import type { z } from "zod"
-import { cn } from "@/lib/utils"
-import TaskStatusSelector from "@/components/TaskStatusSelector"
-import {
-  Plus,
-  Search,
-  X,
-  ChevronDown,
-  Calendar,
-  Clock,
-  Trash2,
-  FolderKanban,
-} from "lucide-react"
-import { format, formatDistanceToNow } from "date-fns"
+import { Plus, Search, Trash2, X } from "lucide-react"
+import { byStatusThenPriority, isOverdue, PRIORITY_LABEL } from "@/lib/taxonomy"
+import { Button, EmptyState, Field, Input, PageHeader, Panel, Segmented, Select, Spinner } from "@/components/ui"
+import TaskRow from "@/components/TaskRow"
 
-const priorityColors: Record<string, string> = {
-  critical: "border-l-red-500 bg-red-500/5",
-  high: "border-l-amber-500 bg-amber-500/5",
-  medium: "border-l-blue-500 bg-blue-500/5",
-  low: "border-l-zinc-400",
-}
-
-const priorityDots: Record<string, string> = {
-  critical: "bg-red-500",
-  high: "bg-amber-500",
-  medium: "bg-blue-500",
-  low: "bg-zinc-400",
-}
+type StatusFilter = "all" | "pending" | "in_progress" | "completed" | "overdue" | "cancelled"
 
 export default function TasksPage() {
   const { user } = useAuth()
+  const { showBanner } = useBanner()
   const [searchParams, setSearchParams] = useSearchParams()
   const [tasks, setTasks] = useState<Task[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(searchParams.get("new") === "1")
-  const [filter, setFilter] = useState<string>("all")
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all")
+  const [priorityFilter, setPriorityFilter] = useState<string>("any")
   const [searchQuery, setSearchQuery] = useState("")
 
   const loadTasks = useCallback(() => {
     if (!user) return
-    setLoading(true)
     api
       .getTasks()
       .then((res) => setTasks(res.tasks))
@@ -53,9 +34,10 @@ export default function TasksPage() {
       .finally(() => setLoading(false))
   }, [user])
 
-  useEffect(() => { loadTasks() }, [loadTasks])
+  useEffect(() => {
+    loadTasks()
+  }, [loadTasks])
 
-  // RHF + Zod
   type FormValues = z.input<typeof taskCreateSchema>
   const {
     register,
@@ -67,263 +49,220 @@ export default function TasksPage() {
     defaultValues: { priority: "medium", tags: [], auto_prioritize: false },
   })
 
+  const closeForm = () => {
+    setShowForm(false)
+    setSearchParams({})
+  }
+
   const onSubmit = async (data: FormValues) => {
     if (!user) return
     try {
       await api.createTask(data)
       reset()
-      setShowForm(false)
-      setSearchParams({})
+      closeForm()
+      showBanner("success", "Task added")
       loadTasks()
     } catch {
-      /* toast in the future */
+      showBanner("error", "Couldn't add the task. Check your connection and try again.")
     }
-  }
-
-  const handleStatusChange = () => {
-    loadTasks()
   }
 
   const deleteTask = async (id: string) => {
     try {
       await api.deleteTask(id)
+      showBanner("success", "Task deleted")
       loadTasks()
     } catch {
-      /* toast */
+      showBanner("error", "Couldn't delete the task.")
     }
   }
 
-  // Filter & Search
+  const matchesStatus = (t: Task, f: StatusFilter) => {
+    if (f === "all") return true
+    if (f === "overdue") return isOverdue(t)
+    return t.status === f
+  }
+
+  const q = searchQuery.toLowerCase()
   const filtered = tasks
-    .filter((t) => {
-      if (filter === "all") return true
-      if (filter === "pending") return t.status === "pending"
-      if (filter === "in_progress") return t.status === "in_progress"
-      if (filter === "completed") return t.status === "completed"
-      if (filter === "cancelled") return t.status === "cancelled"
-      if (filter === "overdue") return t.status !== "completed" && t.due_date && new Date(t.due_date) < new Date()
-      return taskPriorities.includes(filter as (typeof taskPriorities)[number]) && t.priority === filter
-    })
-    .filter((t) => !searchQuery || t.title.toLowerCase().includes(searchQuery.toLowerCase()) || (t.description || "").toLowerCase().includes(searchQuery.toLowerCase()))
-    .sort((a, b) => {
-      // Active tasks first, then by priority weight, then by due date
-      const statusOrder: Record<string, number> = { in_progress: 0, pending: 1, completed: 2, cancelled: 3 }
-      const sa = statusOrder[a.status] ?? 1
-      const sb = statusOrder[b.status] ?? 1
-      if (sa !== sb) return sa - sb
-      const pw: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 }
-      if ((pw[a.priority] ?? 2) !== (pw[b.priority] ?? 2)) return (pw[a.priority] ?? 2) - (pw[b.priority] ?? 2)
-      if (a.due_date && b.due_date) return new Date(a.due_date).getTime() - new Date(b.due_date).getTime()
-      return 0
-    })
+    .filter((t) => matchesStatus(t, statusFilter))
+    .filter((t) => priorityFilter === "any" || t.priority === priorityFilter)
+    .filter((t) => !q || t.title.toLowerCase().includes(q) || (t.description || "").toLowerCase().includes(q))
+    .sort(byStatusThenPriority)
+
+  const count = (f: StatusFilter) => tasks.filter((t) => matchesStatus(t, f)).length
+  const activeCount = tasks.filter((t) => t.status === "pending" || t.status === "in_progress").length
+  const isFiltering = statusFilter !== "all" || priorityFilter !== "any" || !!searchQuery
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Tasks</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            {tasks.filter((t) => t.status === "pending" || t.status === "in_progress").length} active • {tasks.filter((t) => t.status === "completed").length} completed
-          </p>
-        </div>
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:opacity-90 transition-opacity"
-        >
-          {showForm ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
-          {showForm ? "Cancel" : "New Task"}
-        </button>
-      </div>
+    <div>
+      <PageHeader
+        title="Tasks"
+        description={`${activeCount} open, ${count("completed")} done`}
+        actions={
+          showForm ? (
+            <Button variant="ghost" onClick={closeForm}>
+              <X className="h-4 w-4" />
+              Close
+            </Button>
+          ) : (
+            <Button variant="primary" onClick={() => setShowForm(true)}>
+              <Plus className="h-4 w-4" />
+              New task
+            </Button>
+          )
+        }
+      />
 
-      {/* Create Form */}
       {showForm && (
-        <form
-          onSubmit={handleSubmit(onSubmit)}
-          className="rounded-xl border border-border bg-card p-5 space-y-4 animate-fade-in"
-        >
-          <div>
+        <Panel className="mb-6 animate-scale-in">
+          <form onSubmit={handleSubmit(onSubmit)} className="p-4 sm:p-5">
             <input
               {...register("title")}
-              placeholder="Task title..."
-              className="w-full bg-transparent text-lg font-medium placeholder:text-muted-foreground/60 outline-none"
+              placeholder="What needs doing?"
+              aria-label="Task title"
+              className="font-display w-full bg-transparent text-xl font-semibold text-ink placeholder:text-ink-faint focus:outline-none"
               autoFocus
             />
-            {errors.title && <p className="text-xs text-destructive mt-1">{errors.title.message}</p>}
-          </div>
+            {errors.title && <p className="mt-1 text-[13px] text-risk">{errors.title.message}</p>}
+            <textarea
+              {...register("description")}
+              placeholder="Notes, links, acceptance criteria"
+              aria-label="Description"
+              rows={2}
+              className="mt-2 w-full resize-none bg-transparent text-sm text-ink placeholder:text-ink-faint focus:outline-none"
+            />
 
-          <textarea
-            {...register("description")}
-            placeholder="Add a description (optional)"
-            rows={2}
-            className="w-full resize-none bg-transparent text-sm placeholder:text-muted-foreground/60 outline-none"
-          />
-
-          <div className="flex flex-wrap gap-3 items-center">
-            <div className="flex items-center gap-2">
-              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-              <select
-                {...register("priority")}
-                className="bg-secondary text-sm rounded-lg px-3 py-1.5 border border-border outline-none focus-ring"
-              >
-                {taskPriorities.map((p) => (
-                  <option key={p} value={p}>
-                    {p.charAt(0).toUpperCase() + p.slice(1)}
-                  </option>
-                ))}
-              </select>
+            <div className="mt-4 grid gap-4 border-t border-rule pt-4 sm:grid-cols-3">
+              <Field label="Priority" htmlFor="priority">
+                <Select id="priority" {...register("priority")}>
+                  {taskPriorities.map((p) => (
+                    <option key={p} value={p}>
+                      {PRIORITY_LABEL[p]}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Due" htmlFor="due_date">
+                <Input id="due_date" {...register("due_date")} type="datetime-local" />
+              </Field>
+              <Field label="Estimate (hours)" htmlFor="estimated_hours" error={errors.estimated_hours?.message}>
+                <Input id="estimated_hours" {...register("estimated_hours")} type="number" step="0.5" min="0" placeholder="e.g. 2" />
+              </Field>
             </div>
 
-            <div className="flex items-center gap-2">
-              <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
-              <input
-                {...register("due_date")}
-                type="datetime-local"
-                className="bg-secondary text-sm rounded-lg px-3 py-1.5 border border-border outline-none focus-ring"
-              />
-            </div>
-
-            <div className="flex items-center gap-2">
-              <Clock className="h-3.5 w-3.5 text-muted-foreground" />
-              <input
-                {...register("estimated_hours")}
-                type="number"
-                step="0.5"
-                min="0"
-                placeholder="Est. hours"
-                className="w-24 bg-secondary text-sm rounded-lg px-3 py-1.5 border border-border outline-none focus-ring"
-              />
-            </div>
-
-            <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-              <input type="checkbox" {...register("auto_prioritize")} className="rounded" />
-              AI prioritize
-            </label>
-          </div>
-
-          <div className="flex justify-end">
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="rounded-lg bg-primary px-5 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 transition-opacity disabled:opacity-50"
-            >
-              {isSubmitting ? "Creating..." : "Create Task"}
-            </button>
-          </div>
-        </form>
-      )}
-
-      {/* Filters + Search */}
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="relative flex-1 max-w-xs">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder="Search tasks..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full rounded-lg bg-secondary border border-border pl-9 pr-3 py-2 text-sm outline-none focus-ring"
-          />
-        </div>
-        {["all", "pending", "in_progress", "completed", "cancelled", "overdue", "critical", "high"].map((f) => (
-          <button
-            key={f}
-            onClick={() => setFilter(f)}
-            className={cn(
-              "rounded-lg px-3 py-1.5 text-xs font-medium transition-colors border",
-              filter === f
-                ? "bg-primary/10 text-primary border-primary/30"
-                : "bg-secondary text-muted-foreground border-border hover:bg-muted"
-            )}
-          >
-            {f.split("_").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ")}
-          </button>
-        ))}
-      </div>
-
-      {/* Task List */}
-      {loading ? (
-        <div className="flex items-center justify-center py-16">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="text-center py-16 text-muted-foreground text-sm">
-          {searchQuery ? "No tasks match your search." : "No tasks yet. Create one above!"}
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {filtered.map((task) => (
-            <div
-              key={task.id}
-              className={cn(
-                "rounded-xl border-l-4 border border-border px-5 py-4 transition-all hover:shadow-sm",
-                priorityColors[task.priority] || "",
-                task.status === "completed" && "opacity-60"
-              )}
-            >
-              <div className="flex items-start gap-4">
-                <div className="flex-1 min-w-0 space-y-2">
-                  <div className="flex items-start gap-3">
-                    <div className="flex-1 min-w-0">
-                      <p className={cn("text-sm font-medium", task.status === "completed" && "line-through text-muted-foreground")}>
-                        {task.title}
-                      </p>
-                      {task.description && (
-                        <p className="text-xs text-muted-foreground mt-1 truncate">{task.description}</p>
-                      )}
-                    </div>
-
-                    {/* Compact Status Selector */}
-                    <TaskStatusSelector
-                      taskId={task.id}
-                      currentStatus={task.status}
-                      onStatusChange={handleStatusChange}
-                    />
-                  </div>
-
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                      <span className={cn("h-2 w-2 rounded-full", priorityDots[task.priority])} />
-                      {task.priority}
-                    </span>
-                    {task.project_id && (
-                      <span className="flex items-center gap-1 text-[11px] text-blue-600 dark:text-blue-400 font-medium">
-                        <FolderKanban className="h-3 w-3" />
-                        Project
-                      </span>
-                    )}
-                    {task.due_date && (
-                      <span className={cn(
-                        "text-[11px]",
-                        new Date(task.due_date) < new Date() && task.status !== "completed"
-                          ? "text-red-500 font-medium"
-                          : "text-muted-foreground"
-                      )}>
-                        <Calendar className="h-3 w-3 inline mr-1" />
-                        {format(new Date(task.due_date), "MMM d")} •{" "}
-                        {formatDistanceToNow(new Date(task.due_date + "Z"), { addSuffix: true })}
-                      </span>
-                    )}
-                    {task.estimated_hours && (
-                      <span className="text-[11px] text-muted-foreground">
-                        <Clock className="h-3 w-3 inline mr-1" />
-                        {task.estimated_hours}h est
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                <button
-                  onClick={() => deleteTask(task.id)}
-                  className="flex-shrink-0 p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+              <label className="flex cursor-pointer items-center gap-2.5 text-sm text-ink">
+                <input type="checkbox" {...register("auto_prioritize")} className="h-4 w-4 accent-[var(--pen)]" />
+                Let the assistant set priority
+              </label>
+              <div className="flex gap-2">
+                <Button variant="ghost" onClick={closeForm}>
+                  Cancel
+                </Button>
+                <Button type="submit" variant="primary" loading={isSubmitting}>
+                  Add task
+                </Button>
               </div>
             </div>
-          ))}
-        </div>
+          </form>
+        </Panel>
       )}
+
+      <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <Segmented
+          label="Filter by status"
+          value={statusFilter}
+          onChange={setStatusFilter}
+          options={[
+            { value: "all", label: "All", count: tasks.length },
+            { value: "pending", label: "To do", count: count("pending") },
+            { value: "in_progress", label: "In progress", count: count("in_progress") },
+            { value: "overdue", label: "Overdue", count: count("overdue") },
+            { value: "completed", label: "Done", count: count("completed") },
+            { value: "cancelled", label: "Cancelled", count: count("cancelled") },
+          ]}
+        />
+        <div className="flex gap-2">
+          <div className="relative flex-1 md:w-56 md:flex-none">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" />
+            <Input
+              type="search"
+              aria-label="Search tasks"
+              placeholder="Search"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="h-9 pl-9"
+            />
+          </div>
+          <Select
+            aria-label="Filter by priority"
+            value={priorityFilter}
+            onChange={(e) => setPriorityFilter(e.target.value)}
+            className="h-9 w-auto"
+          >
+            <option value="any">Any priority</option>
+            {taskPriorities.map((p) => (
+              <option key={p} value={p}>
+                {PRIORITY_LABEL[p]}
+              </option>
+            ))}
+          </Select>
+        </div>
+      </div>
+
+      <Panel>
+        {loading ? (
+          <Spinner label="Loading tasks" />
+        ) : filtered.length === 0 ? (
+          tasks.length === 0 ? (
+            <EmptyState
+              title="No tasks yet"
+              body="Add your first task. The assistant estimates the time and flags risks as soon as it's saved."
+              action={
+                <Button variant="primary" onClick={() => setShowForm(true)}>
+                  <Plus className="h-4 w-4" />
+                  New task
+                </Button>
+              }
+            />
+          ) : (
+            <EmptyState
+              title="No matching tasks"
+              body="Try a different filter or search term."
+              action={
+                isFiltering ? (
+                  <Button
+                    onClick={() => {
+                      setStatusFilter("all")
+                      setPriorityFilter("any")
+                      setSearchQuery("")
+                    }}
+                  >
+                    Clear filters
+                  </Button>
+                ) : undefined
+              }
+            />
+          )
+        ) : (
+          <ul className="divide-y divide-rule">
+            {filtered.map((task) => (
+              <TaskRow
+                key={task.id}
+                task={task}
+                onStatusChange={loadTasks}
+                showProjectTag
+                actions={
+                  <Button variant="danger-ghost" size="icon" onClick={() => deleteTask(task.id)} aria-label={`Delete ${task.title}`} title="Delete task">
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                }
+              />
+            ))}
+          </ul>
+        )}
+      </Panel>
     </div>
   )
 }
