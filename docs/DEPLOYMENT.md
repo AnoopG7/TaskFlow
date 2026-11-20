@@ -98,8 +98,7 @@ To keep it awake, create a free monitor on [cron-job.org](https://cron-job.org) 
 `vercel.json` also:
 - rewrites every path to `index.html`, so deep links like `/projects/123` work on refresh;
 - caches hashed `/assets/*` for a year;
-- adds basic security headers;
-- skips the build when a commit doesn't touch `frontend/` (`ignoreCommand`).
+- adds basic security headers.
 
 > `VITE_*` variables are baked in at build time. After changing `VITE_API_URL`, go to **Deployments → ⋯ → Redeploy**.
 
@@ -125,7 +124,7 @@ CORS_ORIGIN_REGEX=^https://taskflow-[a-z0-9-]+-<your-vercel-scope>\.vercel\.app$
 
 Both hosts deploy on every push to `main`:
 - **Render** rebuilds only when `backend/**` or `render.yaml` changes (`buildFilter`).
-- **Vercel** rebuilds only when `frontend/**` or `vercel.json` changes (`ignoreCommand`).
+- **Vercel** rebuilds on every push to `main`.
 
 ## Troubleshooting
 
