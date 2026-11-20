@@ -1,12 +1,22 @@
-import { Outlet } from "react-router-dom"
-import Sidebar from "./Sidebar"
+import { Outlet, useLocation } from "react-router-dom"
+import Sidebar, { MobileNav } from "./Sidebar"
+import { cn } from "@/lib/utils"
 
 export default function AppShell() {
+  const { pathname } = useLocation()
+  const isChat = pathname.startsWith("/chat")
+
   return (
-    <div className="flex min-h-screen bg-background text-foreground">
+    <div className="min-h-dvh bg-background text-foreground">
       <Sidebar />
-      <main className="ml-[220px] flex-1 overflow-y-auto bg-background">
-        <div className="mx-auto max-w-5xl px-6 py-6">
+      <MobileNav />
+      <main className="lg:pl-[232px]">
+        <div
+          className={cn(
+            "mx-auto w-full max-w-[1120px] px-4 sm:px-6 lg:px-10",
+            isChat ? "pt-4 lg:pt-8 pb-[72px] lg:pb-8" : "pt-6 pb-24 lg:pt-10 lg:pb-16"
+          )}
+        >
           <Outlet />
         </div>
       </main>
