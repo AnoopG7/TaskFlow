@@ -4,7 +4,7 @@ TaskFlow runs on three free services:
 
 | Part | Host | Config in repo |
 |---|---|---|
-| Frontend (React + Vite) | Vercel | `vercel.json` |
+| Frontend (React + Vite) | Vercel | `frontend/vercel.json` |
 | Backend (FastAPI) | Render | `render.yaml` |
 | Database + auth | Supabase | `backend/db_schema.sql` |
 
@@ -86,7 +86,9 @@ To keep it awake, create a free monitor on [cron-job.org](https://cron-job.org) 
 ## 3. Frontend on Vercel
 
 1. Vercel dashboard → **Add New → Project** → import the repo.
-2. Leave **Root Directory** as the repo root. `vercel.json` already points the install and build at `frontend/` and serves `frontend/dist`.
+2. Set **Root Directory** to `frontend` (Settings → Build and Deployment). Vercel then reads `frontend/vercel.json`, detects Vite, runs `npm ci` and `npm run build`, and serves `dist/`.
+   Leave the Framework, Install, Build and Output overrides **off**, so `vercel.json` is used.
+   (The repo-root `vercel.json` covers the other setup, Root Directory left blank, with the same result.)
 3. **Environment Variables** (Production and Preview):
 
 | Variable | Value |
@@ -133,6 +135,7 @@ Both hosts deploy on every push to `main`:
 | Build fails in `pydantic-core` / `maturin` with `Read-only file system` | Render picked its default Python (3.14), which has no prebuilt wheels for the pinned pydantic. `backend/.python-version` pins 3.12.6. If you override it, also set `PYTHON_VERSION=3.12.6` under **Environment**. |
 | Browser console shows `CORS policy … blocked` | `CORS_ORIGINS` on Render doesn't exactly match the site's origin. Check `https`, the domain, and that there's no trailing slash. |
 | Every page is empty, or the API logs show `Supabase connection failed` | The Supabase project is paused, or the keys are wrong. Restore the project and check the three `SUPABASE_*` values. |
+| Vercel ignores `vercel.json` (wrong install/build command, or 404 on refresh) | Root Directory and config location don't match. Root Directory `frontend` reads `frontend/vercel.json`; a blank Root Directory reads the root `vercel.json`. Also turn off command overrides in the dashboard. |
 | Requests go to `https://<vercel-app>/api/...` and return 404 | `VITE_API_URL` wasn't set when the site was built. Set it and redeploy. |
 | The first request after a while takes ~1 minute | Render free-tier cold start. Add the uptime ping above. |
 | Telegram bot doesn't reply | `curl …/health` should show a `webhook_url`; if it doesn't, check `TELEGRAM_TOKEN`, then `POST /setup-webhook`. The chat ID in Settings must match the one from @userinfobot. |
