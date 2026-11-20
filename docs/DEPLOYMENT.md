@@ -131,6 +131,7 @@ Both hosts deploy on every push to `main`:
 
 | Symptom | Likely cause and fix |
 |---|---|
+| Build fails in `pydantic-core` / `maturin` with `Read-only file system` | Render picked its default Python (3.14), which has no prebuilt wheels for the pinned pydantic. `backend/.python-version` pins 3.12.6. If you override it, also set `PYTHON_VERSION=3.12.6` under **Environment**. |
 | Browser console shows `CORS policy … blocked` | `CORS_ORIGINS` on Render doesn't exactly match the site's origin. Check `https`, the domain, and that there's no trailing slash. |
 | Every page is empty, or the API logs show `Supabase connection failed` | The Supabase project is paused, or the keys are wrong. Restore the project and check the three `SUPABASE_*` values. |
 | Requests go to `https://<vercel-app>/api/...` and return 404 | `VITE_API_URL` wasn't set when the site was built. Set it and redeploy. |
