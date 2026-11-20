@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { useNavigate } from "react-router-dom"
+import { Link } from "react-router-dom"
 import { useAuth } from "@/providers/AuthProvider"
 import { useBanner } from "@/providers/BannerProvider"
 import { api, type Project } from "@/lib/api"
@@ -7,21 +7,20 @@ import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { projectCreateSchema } from "@/lib/schemas"
 import type { z } from "zod"
-import { cn } from "@/lib/utils"
-import { FolderKanban, Plus, X, Palette, ArrowRight, BarChart3 } from "lucide-react"
-import { formatDistanceToNow } from "date-fns"
+import { ChevronRight, Plus } from "lucide-react"
+import { projectHex, relative } from "@/lib/taxonomy"
+import { Button, EmptyState, Field, Input, Modal, PageHeader, Panel, Spinner, Textarea } from "@/components/ui"
+import ColorPicker from "@/components/ColorPicker"
 
-const PROJECT_COLORS: { name: "blue" | "violet" | "emerald" | "amber" | "rose" | "cyan"; class: string }[] = [
-  { name: "blue", class: "bg-blue-500" },
-  { name: "violet", class: "bg-violet-500" },
-  { name: "emerald", class: "bg-emerald-500" },
-  { name: "amber", class: "bg-amber-500" },
-  { name: "rose", class: "bg-rose-500" },
-  { name: "cyan", class: "bg-cyan-500" },
-]
+function ProgressBar({ value, color }: { value: number; color: string }) {
+  return (
+    <div className="h-1.5 w-full overflow-hidden rounded-full bg-wash" role="progressbar" aria-valuenow={Math.round(value)} aria-valuemin={0} aria-valuemax={100}>
+      <div className="h-full rounded-full" style={{ width: `${Math.min(100, value)}%`, backgroundColor: color }} />
+    </div>
+  )
+}
 
 export default function ProjectsPage() {
-  const navigate = useNavigate()
   const { user } = useAuth()
   const { showBanner } = useBanner()
   const [projects, setProjects] = useState<Project[]>([])
@@ -30,10 +29,14 @@ export default function ProjectsPage() {
 
   const loadProjects = () => {
     if (!user) return
-    setLoading(true)
-    api.getProjects().then((r) => setProjects(r.projects)).catch(() => {}).finally(() => setLoading(false))
+    api
+      .getProjects()
+      .then((r) => setProjects(r.projects))
+      .catch(() => {})
+      .finally(() => setLoading(false))
   }
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadProjects() }, [user])
 
   type FormValues = z.input<typeof projectCreateSchema>
@@ -51,150 +54,126 @@ export default function ProjectsPage() {
 
   const selectedColor = watch("color")
 
+  const closeForm = () => {
+    setShowForm(false)
+    reset()
+  }
+
   const onSubmit = async (data: FormValues) => {
     if (!user) return
     try {
       await api.createProject(data)
-      showBanner("success", "Project created!")
-      reset()
-      setShowForm(false)
+      showBanner("success", "Project created")
+      closeForm()
       loadProjects()
     } catch {
-      showBanner("error", "Failed to create project")
+      showBanner("error", "Couldn't create the project.")
     }
   }
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Projects</h1>
-          <p className="text-sm text-muted-foreground mt-1">{projects.length} project{projects.length !== 1 ? "s" : ""}</p>
-        </div>
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:opacity-90 transition-opacity"
-        >
-          {showForm ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
-          {showForm ? "Cancel" : "New Project"}
-        </button>
-      </div>
+    <div>
+      <PageHeader
+        title="Projects"
+        description={
+          projects.length ? `${projects.length} project${projects.length !== 1 ? "s" : ""}` : "Group related tasks and track how far along they are."
+        }
+        actions={
+          <Button variant="primary" onClick={() => setShowForm(true)}>
+            <Plus className="h-4 w-4" />
+            New project
+          </Button>
+        }
+      />
 
-      {showForm && (
-        <form
-          onSubmit={handleSubmit(onSubmit)}
-          className="rounded-xl border border-border bg-card p-5 space-y-4 animate-fade-in"
-        >
-          <input
-            {...register("name")}
-            placeholder="Project name..."
-            className="w-full bg-transparent text-lg font-medium placeholder:text-muted-foreground/60 outline-none"
-            autoFocus
-          />
-          {errors.name && <p className="text-xs text-destructive">{errors.name.message}</p>}
-
-          <textarea
-            {...register("description")}
-            placeholder="Description (optional)"
-            rows={2}
-            className="w-full resize-none bg-transparent text-sm placeholder:text-muted-foreground/60 outline-none"
-          />
-
-          <div className="flex items-center gap-2">
-            <Palette className="h-4 w-4 text-muted-foreground" />
-            <div className="flex gap-2">
-              {PROJECT_COLORS.map((c) => (
-                <button
-                  key={c.name}
-                  type="button"
-                  onClick={() => setValue("color", c.name)}
-                  className={cn(
-                    "h-6 w-6 rounded-full transition-transform",
-                    c.class,
-                    selectedColor === c.name ? "ring-2 ring-offset-2 ring-primary scale-110" : "opacity-70 hover:opacity-100"
-                  )}
-                />
-              ))}
-            </div>
-          </div>
-
-          <div className="flex justify-end">
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="rounded-lg bg-primary px-5 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
-            >
-              {isSubmitting ? "Creating..." : "Create Project"}
-            </button>
-          </div>
+      <Modal
+        open={showForm}
+        onClose={closeForm}
+        title="New project"
+        footer={
+          <>
+            <Button variant="ghost" onClick={closeForm}>
+              Cancel
+            </Button>
+            <Button type="submit" form="project-create" variant="primary" loading={isSubmitting}>
+              Create project
+            </Button>
+          </>
+        }
+      >
+        <form id="project-create" onSubmit={handleSubmit(onSubmit)} className="space-y-4 pt-1">
+          <Field label="Name" htmlFor="p-name" error={errors.name?.message}>
+            <Input id="p-name" {...register("name")} placeholder="e.g. Portfolio site relaunch" autoFocus invalid={!!errors.name} />
+          </Field>
+          <Field label="Description" htmlFor="p-desc">
+            <Textarea id="p-desc" {...register("description")} rows={3} placeholder="What does done look like?" />
+          </Field>
+          <Field label="Colour">
+            <ColorPicker value={selectedColor} onChange={(c) => setValue("color", c)} />
+          </Field>
         </form>
-      )}
+      </Modal>
 
       {loading ? (
-        <div className="flex items-center justify-center py-16">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-        </div>
+        <Spinner label="Loading projects" />
       ) : projects.length === 0 ? (
-        <div className="text-center py-16">
-          <FolderKanban className="h-10 w-10 mx-auto text-muted-foreground/40 mb-3" />
-          <p className="text-muted-foreground text-sm">No projects yet. Create one to organize your tasks.</p>
-        </div>
+        <Panel>
+          <EmptyState
+            title="No projects yet"
+            body="A project collects related tasks so you can see progress in one place."
+            action={
+              <Button variant="primary" onClick={() => setShowForm(true)}>
+                <Plus className="h-4 w-4" />
+                New project
+              </Button>
+            }
+          />
+        </Panel>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {projects.map((p) => {
-            const colorClass = PROJECT_COLORS.find((c) => c.name === p.color)?.class || "bg-blue-500"
-            const totalTasks = p.total_tasks || 0
-            const completedTasks = p.completed_tasks || 0
-            const completionPercentage = p.completion_percentage || 0
-
-            return (
-              <button
-                key={p.id}
-                onClick={() => navigate(`/projects/${p.id}`)}
-                className="rounded-xl border border-border bg-card p-5 hover:shadow-md hover:border-primary/50 transition-all text-left group"
-              >
-                <div className="flex items-start justify-between mb-3">
-                  <div className="flex items-center gap-2 flex-1 min-w-0">
-                    <div className={cn("h-3 w-3 rounded-full flex-shrink-0", colorClass)} />
-                    <h3 className="font-semibold group-hover:text-primary transition-colors truncate">{p.name}</h3>
-                  </div>
-                  <ArrowRight className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors flex-shrink-0 ml-2" />
-                </div>
-
-                {p.description && (
-                  <p className="text-sm text-muted-foreground line-clamp-2 mb-3">{p.description}</p>
-                )}
-
-                {/* Stats */}
-                <div className="space-y-3">
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <BarChart3 className="h-3.5 w-3.5" />
-                    <span>{completedTasks} of {totalTasks} tasks</span>
-                  </div>
-
-                  {totalTasks > 0 && (
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between text-[11px]">
-                        <span className="text-muted-foreground">Progress</span>
-                        <span className="font-medium text-foreground">{Math.round(completionPercentage)}%</span>
+        <Panel>
+          <ul className="divide-y divide-rule">
+            {projects.map((p) => {
+              const hex = projectHex(p.color)
+              const total = p.total_tasks || 0
+              const completed = p.completed_tasks || 0
+              const pct = p.completion_percentage || 0
+              return (
+                <li key={p.id}>
+                  <Link
+                    to={`/projects/${p.id}`}
+                    className="group grid grid-cols-[4px_minmax(0,1fr)_auto] items-center gap-x-4 px-4 py-4 transition-colors hover:bg-wash/40 sm:grid-cols-[4px_minmax(0,1fr)_200px_auto] sm:px-5"
+                  >
+                    <span className="h-full min-h-10 w-1 rounded-full" style={{ backgroundColor: hex }} aria-hidden="true" />
+                    <div className="min-w-0">
+                      <div className="flex items-baseline gap-3">
+                        <p className="truncate text-[15px] font-semibold text-ink">{p.name}</p>
+                        {p.status !== "active" && <span className="shrink-0 text-[12px] capitalize text-ink-faint">{p.status}</span>}
                       </div>
-                      <div className="h-1.5 bg-secondary rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-gradient-to-r from-blue-500 to-emerald-500 transition-all"
-                          style={{ width: `${completionPercentage}%` }}
-                        />
+                      {p.description ? (
+                        <p className="mt-0.5 line-clamp-1 text-[13px] text-ink-soft">{p.description}</p>
+                      ) : (
+                        <p className="mt-0.5 text-[13px] text-ink-faint">Created {relative(p.created_at, true)}</p>
+                      )}
+                      <div className="mt-2.5 sm:hidden">
+                        <ProgressBar value={pct} color={hex} />
                       </div>
                     </div>
-                  )}
-                </div>
-
-                <p className="text-[11px] text-muted-foreground mt-3 pt-3 border-t border-border">
-                  Created {formatDistanceToNow(new Date(p.created_at + "Z"), { addSuffix: true })}
-                </p>
-              </button>
-            )
-          })}
-        </div>
+                    <div className="hidden sm:block">
+                      <div className="mb-1.5 flex items-baseline justify-between text-[12.5px]">
+                        <span className="tabular text-ink-soft">
+                          {completed} of {total} done
+                        </span>
+                        <span className="tabular font-semibold text-ink">{Math.round(pct)}%</span>
+                      </div>
+                      <ProgressBar value={pct} color={hex} />
+                    </div>
+                    <ChevronRight className="h-4 w-4 text-ink-faint transition-colors group-hover:text-ink" />
+                  </Link>
+                </li>
+              )
+            })}
+          </ul>
+        </Panel>
       )}
     </div>
   )
