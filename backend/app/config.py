@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     
     # CORS - set in Render dashboard
     cors_origins: str = ""
+    # Optional regex for extra origins, e.g. Vercel preview deployments:
+    #   ^https://taskflow-[a-z0-9-]+-yourname\.vercel\.app$
+    cors_origin_regex: str = ""
     
     # Environment
     environment: str = "development"
@@ -30,10 +33,14 @@ class Settings(BaseSettings):
         env_file = ".env"
         case_sensitive = False
     
+    def get_webhook_base_url(self) -> str:
+        """Explicit WEBHOOK_BASE_URL, else the URL Render injects for the service."""
+        return (self.webhook_base_url or os.environ.get("RENDER_EXTERNAL_URL", "")).rstrip("/")
+
     def get_cors_origins(self) -> list[str]:
         if not self.cors_origins:
             return ["http://localhost:5173"]
-        return [url.strip() for url in self.cors_origins.split(",") if url.strip()]
+        return [url.strip().rstrip("/") for url in self.cors_origins.split(",") if url.strip()]
 
 
 @lru_cache()

@@ -459,10 +459,12 @@ npm run dev
 
 ## Deployment
 
-- **Frontend**: `cd frontend && npm run build` → Vercel auto-deploys
-- **Backend**: Push to GitHub → Render auto-deploys via `render.yaml`
-- **Database**: Supabase SQL Editor for schema
-- **Telegram**: Set webhook via `POST /setup-webhook` on first deploy
+Full step-by-step guide: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**
+
+- **Database**: Supabase. Run `backend/db_schema.sql` in the SQL Editor.
+- **Backend**: Render Blueprint from `render.yaml` (auto-deploys on pushes that touch `backend/`).
+- **Frontend**: Vercel from `vercel.json`. Set `VITE_API_URL` to the Render URL.
+- **Wire-up**: set `CORS_ORIGINS` on Render to the Vercel URL. The Telegram webhook registers itself on startup.
 
 ---
 

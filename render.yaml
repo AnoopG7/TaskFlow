@@ -1,17 +1,31 @@
+# Render Blueprint for the TaskFlow API (FastAPI).
+# Deploy: Render dashboard → New → Blueprint → pick this repo.
+# Secrets marked `sync: false` are prompted for on first deploy.
 services:
   - type: web
     name: taskflow-api
-    env: python
-    region: oregon
+    runtime: python
+    region: singapore          # closest Render region to IST users; change if needed
     plan: free
     rootDir: backend
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'
     healthCheckPath: /health
     autoDeploy: true
+    buildFilter:               # only redeploy when the backend changes
+      paths:
+        - backend/**
+        - render.yaml
     envVars:
       - key: PYTHON_VERSION
-        value: 3.12.0
+        value: 3.12.6
+      - key: ENVIRONMENT
+        value: production
+      - key: DEBUG
+        value: "false"
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-120b
+      # ── secrets (set in the dashboard) ──
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_KEY
@@ -22,11 +36,12 @@ services:
         sync: false
       - key: TELEGRAM_TOKEN
         sync: false
-      - key: WEBHOOK_BASE_URL
-        sync: false
-      - key: ENVIRONMENT
-        value: production
-      - key: DEBUG
-        value: false
+      # Frontend origin(s), comma-separated, no trailing slash
       - key: CORS_ORIGINS
+        sync: false
+      # Optional: regex for Vercel preview URLs
+      - key: CORS_ORIGIN_REGEX
+        sync: false
+      # Optional: defaults to the RENDER_EXTERNAL_URL Render provides
+      - key: WEBHOOK_BASE_URL
         sync: false

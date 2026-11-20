@@ -53,7 +53,7 @@ async def lifespan(app: FastAPI):
     try:
         from app.services.telegram_service import setup_webhook, start_polling
         settings = get_settings()
-        if settings.environment == "production" or (settings.webhook_base_url and settings.webhook_base_url.startswith("https")):
+        if settings.environment == "production" or settings.get_webhook_base_url().startswith("https"):
             if await setup_webhook():
                 logger.info(f"✅ Telegram webhook configured")
         else:
@@ -86,6 +86,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.get_cors_origins(),
+    allow_origin_regex=settings.cors_origin_regex or None,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -83,11 +83,11 @@ async def set_webhook(webhook_url: str) -> bool:
 
 def get_webhook_url() -> str:
     """Get the full webhook URL from config."""
-    settings = get_settings()
-    if not settings.webhook_base_url:
+    base = get_settings().get_webhook_base_url()
+    if not base:
         logger.warning("WEBHOOK_BASE_URL not configured")
         return ""
-    return f"{settings.webhook_base_url}/webhook/telegram"
+    return f"{base}/webhook/telegram"
 
 
 async def setup_webhook() -> bool:
