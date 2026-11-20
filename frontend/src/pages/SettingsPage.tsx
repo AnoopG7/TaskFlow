@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useAuth } from "@/providers/AuthProvider"
@@ -6,29 +6,54 @@ import { useTheme } from "@/providers/ThemeProvider"
 import { useBanner } from "@/providers/BannerProvider"
 import { api, type UserProfile, type AgentPreferences } from "@/lib/api"
 import { profileUpdateSchema, type ProfileUpdateInput, agentPreferencesSchema, type AgentPreferencesInput } from "@/lib/schemas"
-import {
-  User,
-  Bell,
-  Monitor,
-  Sun,
-  Moon,
-  Save,
-  Clock,
-  Zap,
-  MessageSquare,
-  RotateCcw,
-  Loader2,
-} from "lucide-react"
+import { Monitor, Sun, Moon, RotateCcw } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { Button, Field, Input, Modal, PageHeader, Panel, Select, Spinner, Switch, Textarea } from "@/components/ui"
+
+function Section({ title, description, children }: { title: string; description?: ReactNode; children: ReactNode }) {
+  return (
+    <div className="grid gap-4 px-4 py-6 sm:px-6 md:grid-cols-[220px_minmax(0,1fr)] md:gap-10">
+      <div>
+        <h2 className="text-[15px] font-semibold text-ink">{title}</h2>
+        {description && <p className="mt-1 text-[13px] leading-relaxed text-ink-soft">{description}</p>}
+      </div>
+      <div className="min-w-0 max-w-xl space-y-5">{children}</div>
+    </div>
+  )
+}
+
+function ToggleRow({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
+  return (
+    <label className="flex cursor-pointer items-start justify-between gap-6">
+      <span>
+        <span className="block text-[14px] font-medium text-ink">{title}</span>
+        {description && <span className="block text-[13px] text-ink-soft">{description}</span>}
+      </span>
+      <span className="pt-0.5">{children}</span>
+    </label>
+  )
+}
+
+function SaveBar({ dirty, saving, label }: { dirty: boolean; saving: boolean; label: string }) {
+  return (
+    <div className="flex items-center justify-end gap-3 border-t border-rule bg-wash/40 px-4 py-3 sm:px-6">
+      <span className={cn("text-[13px]", dirty ? "text-ink" : "text-ink-faint")}>{dirty ? "Unsaved changes" : "All changes saved"}</span>
+      <Button type="submit" variant="primary" size="sm" disabled={!dirty} loading={saving}>
+        {label}
+      </Button>
+    </div>
+  )
+}
 
 export default function SettingsPage() {
   const { user } = useAuth()
   const { theme, setTheme } = useTheme()
   const { showBanner } = useBanner()
   const [loading, setLoading] = useState(true)
-  const [profile, setProfile] = useState<UserProfile | null>(null)
+  const [, setProfile] = useState<UserProfile | null>(null)
   const [agentPrefs, setAgentPrefs] = useState<AgentPreferences | null>(null)
   const [resettingPrefs, setResettingPrefs] = useState(false)
+  const [confirmReset, setConfirmReset] = useState(false)
 
   // Profile form
   const {
@@ -96,9 +121,9 @@ export default function SettingsPage() {
     try {
       const result = await api.createOrUpdateProfile({ ...data, user_id: user.user_id })
       setProfile(result)
-      showBanner("success", "Profile settings saved!")
+      showBanner("success", "Profile saved")
     } catch {
-      showBanner("error", "Failed to save profile settings")
+      showBanner("error", "Couldn't save your profile.")
     }
   }
 
@@ -107,121 +132,84 @@ export default function SettingsPage() {
     try {
       const result = await api.updateAgentPreferences(data)
       setAgentPrefs(result)
-      showBanner("success", "Agent preferences saved!")
+      showBanner("success", "Assistant settings saved")
     } catch {
-      showBanner("error", "Failed to save agent preferences")
+      showBanner("error", "Couldn't save assistant settings.")
     }
   }
 
   const handleResetPreferences = async () => {
     if (!user) return
-    if (!confirm("Reset all agent preferences to defaults?")) return
-
     setResettingPrefs(true)
     try {
       const result = await api.resetAgentPreferences()
       resetAgent(result as AgentPreferencesInput)
       setAgentPrefs(result)
-      showBanner("success", "Preferences reset to defaults")
+      showBanner("success", "Assistant settings reset")
     } catch {
-      showBanner("error", "Failed to reset preferences")
+      showBanner("error", "Couldn't reset assistant settings.")
     } finally {
       setResettingPrefs(false)
+      setConfirmReset(false)
     }
   }
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-24">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-      </div>
-    )
-  }
+  if (loading) return <Spinner label="Loading settings" />
 
   return (
-    <div className="space-y-8 max-w-3xl animate-fade-in pb-8">
-      <div>
-        <h1 className="text-3xl font-bold text-foreground">Settings</h1>
-        <p className="text-sm text-muted-foreground mt-1">Configure your profile and agent preferences</p>
-      </div>
+    <div className="space-y-8">
+      <PageHeader title="Settings" description="Your profile, how the assistant reaches you, and how it works." />
 
-      {/* ─── PROFILE SECTION ─── */}
-      <form onSubmit={handleProfileSubmit(onProfileSubmit)} className="space-y-6">
-        {/* Profile */}
-        <section className="rounded-xl border border-border bg-card p-6 space-y-5">
-          <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-            <User className="h-4 w-4 text-primary" />
-            Profile
-          </div>
+      <form onSubmit={handleProfileSubmit(onProfileSubmit)}>
+        <Panel className="overflow-hidden">
+          <div className="divide-y divide-rule">
+            <Section title="Profile" description="Your timezone sets when briefings arrive and how due times are read.">
+              <Field label="Name" htmlFor="s-name" error={profileErrors.name?.message}>
+                <Input id="s-name" {...registerProfile("name")} />
+              </Field>
+              <Field label="Email" htmlFor="s-email" hint="Your sign-in email. It can't be changed here.">
+                <Input id="s-email" {...registerProfile("email")} type="email" disabled />
+              </Field>
+              <Field label="Timezone" htmlFor="s-tz">
+                <Select id="s-tz" {...registerProfile("timezone")}>
+                  <option value="IST">India (IST)</option>
+                  <option value="UTC">UTC</option>
+                  <option value="EST">US East (EST)</option>
+                  <option value="PST">US West (PST)</option>
+                  <option value="GMT">UK (GMT)</option>
+                  <option value="CET">Central Europe (CET)</option>
+                  <option value="JST">Japan (JST)</option>
+                </Select>
+              </Field>
+            </Section>
 
-          <div className="space-y-4">
-            <div>
-              <label className="text-sm text-muted-foreground mb-1 block">Name</label>
-              <input
-                {...registerProfile("name")}
-                className="w-full rounded-lg bg-background border border-border px-4 py-2.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors"
-              />
-              {profileErrors.name && <p className="text-xs text-destructive mt-1">{profileErrors.name.message}</p>}
-            </div>
-
-            <div>
-              <label className="text-sm text-muted-foreground mb-1 block">Email</label>
-              <input
-                {...registerProfile("email")}
-                type="email"
-                disabled
-                className="w-full rounded-lg bg-muted border border-border px-4 py-2.5 text-sm text-muted-foreground outline-none cursor-not-allowed"
-              />
-              <p className="text-xs text-muted-foreground mt-1">Email is tied to your Supabase Auth account</p>
-            </div>
-
-            <div>
-              <label className="text-sm text-muted-foreground mb-1 block">Timezone</label>
-              <select
-                {...registerProfile("timezone")}
-                className="w-full rounded-lg bg-background border border-border px-4 py-2.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors"
-              >
-                <option value="IST">IST (India)</option>
-                <option value="UTC">UTC</option>
-                <option value="EST">EST (US East)</option>
-                <option value="PST">PST (US West)</option>
-                <option value="GMT">GMT (UK)</option>
-                <option value="CET">CET (Central Europe)</option>
-                <option value="JST">JST (Japan)</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="text-sm text-muted-foreground mb-1 block">Telegram Chat ID</label>
-              <input
-                {...registerProfile("telegram_chat_id")}
-                placeholder="Your Telegram chat ID (optional)"
-                className="w-full rounded-lg bg-background border border-border px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors"
-              />
-              <div className="mt-2 p-3 rounded-lg bg-muted/50 border border-border">
-                <p className="text-xs font-medium text-foreground mb-2">How to get your Telegram Chat ID:</p>
-                <ol className="text-xs text-muted-foreground space-y-1.5">
-                  <li>1. Open Telegram and search for <span className="text-primary font-medium">@userinfobot</span></li>
-                  <li>2. Click <span className="text-primary font-medium">Start</span> or send <span className="text-primary font-medium">/start</span></li>
-                  <li>3. Copy your numeric Chat ID (e.g., 6941167090)</li>
-                  <li>4. Paste it here and save</li>
+            <Section
+              title="Telegram"
+              description="Link Telegram to add tasks, mark them done and get check-ins from your phone."
+            >
+              <Field label="Telegram chat ID" htmlFor="s-tg">
+                <Input id="s-tg" {...registerProfile("telegram_chat_id")} inputMode="numeric" placeholder="e.g. 6941167090" className="tabular" />
+              </Field>
+              <div className="rounded-md bg-wash/70 p-4">
+                <p className="text-[13px] font-medium text-ink">Finding your chat ID</p>
+                <ol className="mt-2 list-decimal space-y-1 pl-5 text-[13px] text-ink-soft marker:text-ink-faint">
+                  <li>
+                    In Telegram, search for <span className="font-medium text-ink">@userinfobot</span>.
+                  </li>
+                  <li>
+                    Tap <span className="font-medium text-ink">Start</span> or send <span className="font-medium text-ink">/start</span>.
+                  </li>
+                  <li>Copy the number it replies with and paste it above.</li>
                 </ol>
               </div>
-              <p className="text-xs text-muted-foreground mt-2">
-                Once linked, you can create tasks and get notifications directly from Telegram.
-              </p>
-            </div>
+            </Section>
           </div>
-        </section>
+          <SaveBar dirty={profileDirty} saving={profileSubmitting} label="Save profile" />
+        </Panel>
+      </form>
 
-        {/* Theme */}
-        <section className="rounded-xl border border-border bg-card p-6 space-y-5">
-          <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-            <Monitor className="h-4 w-4 text-primary" />
-            Appearance
-          </div>
-
-          <div className="flex gap-3 flex-wrap">
+      <Panel>
+        <Section title="Appearance" description="Applies on this device only.">
+          <div role="radiogroup" aria-label="Theme" className="grid grid-cols-3 gap-2 sm:max-w-sm">
             {[
               { value: "light" as const, icon: Sun, label: "Light" },
               { value: "dark" as const, icon: Moon, label: "Dark" },
@@ -230,12 +218,12 @@ export default function SettingsPage() {
               <button
                 key={value}
                 type="button"
+                role="radio"
+                aria-checked={theme === value}
                 onClick={() => setTheme(value)}
                 className={cn(
-                  "flex items-center gap-2 rounded-lg border px-4 py-2.5 text-sm transition-colors",
-                  theme === value
-                    ? "border-primary bg-primary/10 text-primary"
-                    : "border-border text-foreground hover:bg-muted"
+                  "flex flex-col items-center gap-1.5 rounded-md border px-3 py-3 text-[13px] font-medium transition-colors",
+                  theme === value ? "border-pen bg-pen-wash text-pen" : "border-rule-strong text-ink-soft hover:bg-wash hover:text-ink"
                 )}
               >
                 <Icon className="h-4 w-4" />
@@ -243,210 +231,103 @@ export default function SettingsPage() {
               </button>
             ))}
           </div>
-        </section>
+        </Section>
+      </Panel>
 
-        {/* Save Profile */}
-        <div className="flex justify-end">
-          <button
-            type="submit"
-            disabled={profileSubmitting || !profileDirty}
-            className="flex items-center gap-2 rounded-xl bg-primary px-6 py-2.5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50 transition-opacity"
-          >
-            <Save className="h-4 w-4" />
-            {profileSubmitting ? "Saving..." : "Save Profile"}
-          </button>
-        </div>
-      </form>
-
-      {/* ─── AGENT PREFERENCES SECTION ─── */}
       {agentPrefs && (
-        <form onSubmit={handleAgentSubmit(onAgentSubmit)} className="space-y-6">
-          {/* Notifications */}
-          <section className="rounded-xl border border-border bg-card p-6 space-y-5">
-            <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-              <Bell className="h-4 w-4 text-primary" />
-              Notifications
+        <form onSubmit={handleAgentSubmit(onAgentSubmit)}>
+          <Panel className="overflow-hidden">
+            <div className="divide-y divide-rule">
+              <Section title="Notifications" description="When and where the assistant checks in with you.">
+                <ToggleRow title="Send notifications" description="Briefings, reminders and warnings.">
+                  <Switch {...registerAgent("notification_enabled")} />
+                </ToggleRow>
+                <ToggleRow title="Deliver on Telegram" description="Needs a linked chat ID.">
+                  <Switch {...registerAgent("telegram_notifications_enabled")} />
+                </ToggleRow>
+                <Field label="Morning brief at" htmlFor="s-brief">
+                  <Input id="s-brief" {...registerAgent("morning_brief_time")} type="time" className="tabular w-40" />
+                </Field>
+              </Section>
+
+              <Section title="Quiet hours" description="No notifications are sent between these times.">
+                <ToggleRow title="Use quiet hours">
+                  <Switch {...registerAgent("dnd_enabled")} />
+                </ToggleRow>
+                {dndEnabled && (
+                  <div className="grid grid-cols-2 gap-4 sm:max-w-sm">
+                    <Field label="From" htmlFor="s-dnd-start">
+                      <Input id="s-dnd-start" {...registerAgent("dnd_start")} type="time" className="tabular" />
+                    </Field>
+                    <Field label="Until" htmlFor="s-dnd-end">
+                      <Input id="s-dnd-end" {...registerAgent("dnd_end")} type="time" className="tabular" />
+                    </Field>
+                  </div>
+                )}
+              </Section>
+
+              <Section title="Check-ins" description="Choose which messages the assistant sends on its own.">
+                <ToggleRow title="Morning brief" description="What's due today and what to start with.">
+                  <Switch {...registerAgent("enable_morning_brief")} />
+                </ToggleRow>
+                <ToggleRow title="Evening debrief" description="What got done and what rolls over.">
+                  <Switch {...registerAgent("enable_evening_debrief")} />
+                </ToggleRow>
+                <ToggleRow title="Risk alerts" description="When a task looks likely to miss its due date.">
+                  <Switch {...registerAgent("enable_risk_detection")} />
+                </ToggleRow>
+                <ToggleRow title="Overload warnings" description="When a day holds more hours than you have.">
+                  <Switch {...registerAgent("enable_overload_warnings")} />
+                </ToggleRow>
+              </Section>
+
+              <Section title="Instructions" description="Standing guidance the assistant follows when it estimates and prioritises.">
+                <Field label="Your instructions" htmlFor="s-instr" hint="Up to 1,000 characters." error={agentErrors.custom_agent_instructions?.message}>
+                  <Textarea
+                    id="s-instr"
+                    {...registerAgent("custom_agent_instructions")}
+                    rows={4}
+                    maxLength={1000}
+                    placeholder="e.g. Treat anything touching auth or payments as high priority."
+                  />
+                </Field>
+              </Section>
             </div>
-
-            <div className="space-y-4">
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  {...registerAgent("notification_enabled")}
-                  className="w-4 h-4 rounded border-border bg-background"
-                />
-                <span className="text-sm text-foreground">Enable notifications</span>
-              </label>
-
-              <div className="space-y-3 pl-7">
-                <div>
-                  <label className="text-sm text-muted-foreground mb-1 block">Morning brief time</label>
-                  <input
-                    {...registerAgent("morning_brief_time")}
-                    type="time"
-                    className="w-48 rounded-lg bg-background border border-border px-4 py-2.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors"
-                  />
-                </div>
-
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    {...registerAgent("telegram_notifications_enabled")}
-                    className="w-4 h-4 rounded border-border bg-background"
-                  />
-                  <span className="text-sm text-foreground">Send via Telegram</span>
-                </label>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-rule bg-wash/40 px-4 py-3 sm:px-6">
+              <Button size="sm" variant="danger-ghost" onClick={() => setConfirmReset(true)}>
+                <RotateCcw className="h-3.5 w-3.5" />
+                Reset to defaults
+              </Button>
+              <div className="flex items-center gap-3">
+                <span className={cn("text-[13px]", agentDirty ? "text-ink" : "text-ink-faint")}>
+                  {agentDirty ? "Unsaved changes" : "All changes saved"}
+                </span>
+                <Button type="submit" variant="primary" size="sm" disabled={!agentDirty} loading={agentSubmitting}>
+                  Save assistant settings
+                </Button>
               </div>
             </div>
-          </section>
-
-          {/* Do Not Disturb */}
-          <section className="rounded-xl border border-border bg-card p-6 space-y-5">
-            <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-              <Clock className="h-4 w-4 text-primary" />
-              Do Not Disturb
-            </div>
-
-            <div className="space-y-4">
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  {...registerAgent("dnd_enabled")}
-                  className="w-4 h-4 rounded border-border bg-background"
-                />
-                <span className="text-sm text-foreground">Enable DND schedule</span>
-              </label>
-
-              {dndEnabled && (
-                <div className="space-y-3 pl-7 grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-sm text-muted-foreground mb-1 block">DND starts</label>
-                    <input
-                      {...registerAgent("dnd_start")}
-                      type="time"
-                      className="w-full rounded-lg bg-background border border-border px-4 py-2.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-sm text-muted-foreground mb-1 block">DND ends</label>
-                    <input
-                      {...registerAgent("dnd_end")}
-                      type="time"
-                      className="w-full rounded-lg bg-background border border-border px-4 py-2.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors"
-                    />
-                  </div>
-                </div>
-              )}
-
-              <p className="text-xs text-muted-foreground pl-7">No notifications will be sent during these hours</p>
-            </div>
-          </section>
-
-          {/* Agent Triggers */}
-          <section className="rounded-xl border border-border bg-card p-6 space-y-5">
-            <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-              <Zap className="h-4 w-4 text-primary" />
-              Agent Triggers
-            </div>
-
-            <div className="space-y-3 pl-7">
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  {...registerAgent("enable_morning_brief")}
-                  className="w-4 h-4 rounded border-border bg-background"
-                />
-                <div>
-                  <p className="text-sm text-foreground">Morning brief</p>
-                  <p className="text-xs text-muted-foreground">Daily task overview</p>
-                </div>
-              </label>
-
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  {...registerAgent("enable_evening_debrief")}
-                  className="w-4 h-4 rounded border-border bg-background"
-                />
-                <div>
-                  <p className="text-sm text-foreground">Evening debrief</p>
-                  <p className="text-xs text-muted-foreground">Daily summary & insights</p>
-                </div>
-              </label>
-
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  {...registerAgent("enable_risk_detection")}
-                  className="w-4 h-4 rounded border-border bg-background"
-                />
-                <div>
-                  <p className="text-sm text-foreground">Risk detection</p>
-                  <p className="text-xs text-muted-foreground">Alerts for high-risk tasks</p>
-                </div>
-              </label>
-
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  {...registerAgent("enable_overload_warnings")}
-                  className="w-4 h-4 rounded border-border bg-background"
-                />
-                <div>
-                  <p className="text-sm text-foreground">Overload warnings</p>
-                  <p className="text-xs text-muted-foreground">Alert if too many tasks scheduled</p>
-                </div>
-              </label>
-            </div>
-          </section>
-
-          {/* Custom Instructions */}
-          <section className="rounded-xl border border-border bg-card p-6 space-y-5">
-            <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-              <MessageSquare className="h-4 w-4 text-primary" />
-              Agent Instructions
-            </div>
-
-            <div>
-              <label className="text-sm text-muted-foreground mb-2 block">Custom guidelines (max 1000 chars)</label>
-              <textarea
-                {...registerAgent("custom_agent_instructions")}
-                placeholder="e.g., 'Always consider async team members in time estimates' or 'Mark security tasks as high priority'"
-                rows={4}
-                className="w-full rounded-lg bg-background border border-border px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors resize-none"
-              />
-              <p className="text-xs text-muted-foreground mt-2">These instructions will guide the AI agent in task analysis</p>
-            </div>
-          </section>
-
-          {/* Save & Reset */}
-          <div className="flex justify-between gap-3">
-            <button
-              type="button"
-              onClick={handleResetPreferences}
-              disabled={resettingPrefs}
-              className="flex items-center gap-2 rounded-xl border border-destructive/50 px-4 py-2.5 text-sm font-medium text-destructive hover:bg-destructive/10 disabled:opacity-50 transition-colors"
-            >
-              {resettingPrefs ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <RotateCcw className="h-4 w-4" />
-              )}
-              Reset to Defaults
-            </button>
-
-            <button
-              type="submit"
-              disabled={agentSubmitting || !agentDirty}
-              className="flex items-center gap-2 rounded-xl bg-primary px-6 py-2.5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50 transition-opacity"
-            >
-              <Save className="h-4 w-4" />
-              {agentSubmitting ? "Saving..." : "Save Preferences"}
-            </button>
-          </div>
+          </Panel>
         </form>
       )}
+
+      <Modal
+        open={confirmReset}
+        onClose={() => setConfirmReset(false)}
+        size="sm"
+        title="Reset assistant settings?"
+        description="Notifications, quiet hours, check-ins and your instructions go back to their defaults."
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setConfirmReset(false)}>
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={handleResetPreferences} loading={resettingPrefs}>
+              Reset
+            </Button>
+          </>
+        }
+      />
     </div>
   )
 }
