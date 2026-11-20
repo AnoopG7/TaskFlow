@@ -1,8 +1,9 @@
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom"
 import { AuthProvider, useAuth } from "@/providers/AuthProvider"
 import { ThemeProvider } from "@/providers/ThemeProvider"
 import { BannerProvider } from "@/providers/BannerProvider"
 import AppShell from "@/components/layout/AppShell"
+import LandingPage from "@/pages/LandingPage"
 import LoginPage from "@/pages/LoginPage"
 import SignupPage from "@/pages/SignupPage"
 import DashboardPage from "@/pages/DashboardPage"
@@ -12,9 +13,13 @@ import ProjectDetailPage from "@/pages/ProjectDetailPage"
 import ChatPage from "@/pages/ChatPage"
 import SettingsPage from "@/pages/SettingsPage"
 
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
+/** Signed in: the app. Signed out: the landing page at "/", login everywhere else. */
+function AppGate() {
   const { isAuthenticated } = useAuth()
-  return isAuthenticated ? <>{children}</> : <Navigate to="/login" replace />
+  const { pathname } = useLocation()
+  if (isAuthenticated) return <AppShell />
+  if (pathname === "/") return <LandingPage />
+  return <Navigate to="/login" replace />
 }
 
 function AppRoutes() {
@@ -31,11 +36,7 @@ function AppRoutes() {
         element={isAuthenticated ? <Navigate to="/" replace /> : <SignupPage />}
       />
       <Route
-        element={
-          <ProtectedRoute>
-            <AppShell />
-          </ProtectedRoute>
-        }
+        element={<AppGate />}
       >
         <Route path="/" element={<DashboardPage />} />
         <Route path="/tasks" element={<TasksPage />} />
