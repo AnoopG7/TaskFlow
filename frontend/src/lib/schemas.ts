@@ -60,7 +60,7 @@ export const profileUpdateSchema = z.object({
   telegram_chat_id: z
     .string()
     .trim()
-    .regex(/^-?\d*$/, "A chat ID is digits only, e.g. 6941167090.")
+    .regex(/^-?\d*$/, "A chat ID is digits only, e.g. 1234567890.")
     .optional(),
   brief_time: z.string().optional(),
 })
