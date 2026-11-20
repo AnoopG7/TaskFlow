@@ -1,60 +1,216 @@
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Link } from "react-router-dom"
+import { format, isSameDay } from "date-fns"
+import { Plus, Sunrise } from "lucide-react"
 import { useAuth } from "@/providers/AuthProvider"
 import { api, type Task } from "@/lib/api"
-import {
-  CheckCircle2,
-  Clock,
-  AlertTriangle,
-  Plus,
-  ArrowRight,
-  TrendingUp,
-  MessageSquare,
-} from "lucide-react"
 import { cn } from "@/lib/utils"
-import { formatDistanceToNow } from "date-fns"
+import { fmt, hasDueTime, isOverdue, parseDate, relative, PRIORITY_WEIGHT, STATUS_LABEL } from "@/lib/taxonomy"
+import { Panel, PanelHeader, PriorityMark, Spinner } from "@/components/ui"
+import { buttonClass } from "@/lib/button"
 
-interface StatCardProps {
-  label: string
-  value: string | number
-  icon: React.ReactNode
-  color: string
-  trend?: string
+const DAY_START = 8
+const DAY_END = 19
+
+function useNow(intervalMs = 60_000) {
+  const [now, setNow] = useState(() => new Date())
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), intervalMs)
+    return () => clearInterval(id)
+  }, [intervalMs])
+  return now
 }
 
-function StatCard({ label, value, icon, color, trend }: StatCardProps) {
+function hoursLabel(h: number) {
+  return `${Number.isInteger(h) ? h : h.toFixed(1)}h`
+}
+
+/* ── Today sheet ─────────────────────────────────────────── */
+
+function TimelineTask({ task }: { task: Task }) {
+  const done = task.status === "completed"
+  const late = isOverdue(task)
   return (
-    <div className="rounded-xl border border-border bg-card p-5 animate-fade-in">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm text-muted-foreground">{label}</p>
-          <p className="text-2xl font-bold text-foreground mt-1">{value}</p>
-          {trend && (
-            <p className="text-xs text-emerald-500 mt-1 flex items-center gap-1">
-              <TrendingUp className="h-3 w-3" />
-              {trend}
-            </p>
-          )}
-        </div>
-        <div className={cn("flex h-11 w-11 items-center justify-center rounded-xl", color)}>
-          {icon}
-        </div>
-      </div>
+    <div
+      className={cn(
+        "flex min-w-0 items-center gap-3 rounded-md border px-3 py-2",
+        done
+          ? "border-rule bg-wash"
+          : late
+            ? "border-risk/30 bg-risk-wash"
+            : task.status === "in_progress"
+              ? "border-pen/25 bg-pen-wash"
+              : "border-rule-strong bg-sheet"
+      )}
+    >
+      <PriorityMark priority={task.priority} />
+      <span className={cn("min-w-0 flex-1 truncate text-[14px] font-medium", done ? "text-ink-faint line-through" : "text-ink")}>
+        {task.title}
+      </span>
+      <span className="tabular shrink-0 text-[12px] text-ink-soft">
+        {[hasDueTime(task.due_date) ? fmt(task.due_date, "HH:mm") : "", task.estimated_hours ? hoursLabel(task.estimated_hours) : ""]
+          .filter(Boolean)
+          .join(", ")}
+      </span>
     </div>
   )
 }
 
-const priorityColors: Record<string, string> = {
-  critical: "bg-red-500",
-  high: "bg-amber-500",
-  medium: "bg-blue-500",
-  low: "bg-zinc-400",
+function TodaySheet({ tasks, now }: { tasks: Task[]; now: Date }) {
+  const timed = tasks.filter((t) => hasDueTime(t.due_date))
+  const untimed = tasks.filter((t) => !timed.includes(t))
+
+  const dueHours = timed.map((t) => parseDate(t.due_date)!.getHours())
+  // Work-day window, stretched only to fit tasks due outside it
+  const start = Math.min(DAY_START, ...dueHours)
+  const end = Math.max(DAY_END, ...dueHours)
+  const hours = Array.from({ length: end - start + 1 }, (_, i) => start + i)
+
+  return (
+    <Panel className="overflow-hidden">
+      <PanelHeader
+        title="Today"
+        aside={
+          <span className="tabular text-[13px] text-ink-soft">
+            {tasks.length === 0 ? "Nothing due" : `${tasks.length} due`}
+          </span>
+        }
+      />
+
+      {tasks.length === 0 && (
+        <p className="border-b border-rule px-4 py-3 text-sm text-ink-soft sm:px-5">
+          Nothing is due today. Give a task a due time and it lands on this sheet at that hour.
+        </p>
+      )}
+
+      {untimed.length > 0 && (
+        <div className="space-y-2 border-b border-rule px-4 py-3 sm:px-5">
+          <p className="text-[13px] font-medium text-ink-soft">Due today, any time</p>
+          {untimed.map((t) => (
+            <TimelineTask key={t.id} task={t} />
+          ))}
+        </div>
+      )}
+
+      <ol className="relative pt-5 pb-2" aria-label="Hours of the day">
+        {hours.map((h) => {
+          const inHour = timed
+            .filter((t) => parseDate(t.due_date)!.getHours() === h)
+            .sort((a, b) => parseDate(a.due_date)!.getTime() - parseDate(b.due_date)!.getTime())
+          const isNowHour = now.getHours() === h
+          const past = h < now.getHours()
+          return (
+            <li key={h} className="relative grid grid-cols-[56px_1fr] gap-3 px-4 sm:grid-cols-[64px_1fr] sm:px-5">
+              <span
+                className={cn(
+                  "tabular -mt-[9px] pt-0 text-[12px] leading-[18px]",
+                  isNowHour ? "font-semibold text-ink" : past ? "text-ink-faint" : "text-ink-soft"
+                )}
+              >
+                {String(h).padStart(2, "0")}:00
+              </span>
+              <div className={cn("relative min-h-[44px] border-t pb-2 pt-2", past ? "border-rule" : "border-rule-strong/70")}>
+                {isNowHour && (
+                  <div
+                    className="pointer-events-none absolute -left-2 right-0 z-10 flex items-center"
+                    style={{ top: `${(now.getMinutes() / 60) * 100}%` }}
+                    aria-label={`Now, ${format(now, "HH:mm")}`}
+                  >
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-marker ring-2 ring-sheet" />
+                    <span className="h-[3px] flex-1 rounded-full bg-marker animate-draw-now" />
+                  </div>
+                )}
+                <div className="relative z-20 space-y-1.5">
+                  {inHour.map((t) => (
+                    <TimelineTask key={t.id} task={t} />
+                  ))}
+                </div>
+              </div>
+            </li>
+          )
+        })}
+      </ol>
+
+    </Panel>
+  )
 }
+
+/* ── Side column ─────────────────────────────────────────── */
+
+function StatusBreakdown({ tasks }: { tasks: Task[] }) {
+  const groups = [
+    { key: "pending", tone: "bg-ink-faint" },
+    { key: "in_progress", tone: "bg-pen" },
+    { key: "completed", tone: "bg-done" },
+  ].map((g) => ({ ...g, count: tasks.filter((t) => t.status === g.key).length }))
+  const total = groups.reduce((s, g) => s + g.count, 0)
+  const overdue = tasks.filter(isOverdue).length
+
+  return (
+    <Panel>
+      <PanelHeader title="All tasks" aside={<Link to="/tasks" className="text-[13px] font-medium text-pen hover:underline underline-offset-4">Open list</Link>} />
+      <div className="px-4 py-4 sm:px-5">
+        <div className="flex h-2 overflow-hidden rounded-full bg-wash" aria-hidden="true">
+          {total > 0 &&
+            groups.map((g) => (
+              <span key={g.key} className={cn("h-full", g.tone)} style={{ width: `${(g.count / total) * 100}%` }} />
+            ))}
+        </div>
+        <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3">
+          {groups.map((g) => (
+            <div key={g.key} className="flex items-center gap-2">
+              <span className={cn("h-2 w-2 rounded-full", g.tone)} />
+              <dt className="text-[13px] text-ink-soft">{STATUS_LABEL[g.key]}</dt>
+              <dd className="tabular ml-auto text-[14px] font-semibold text-ink">{g.count}</dd>
+            </div>
+          ))}
+          <div className="flex items-center gap-2">
+            <span className="h-2 w-2 rounded-full bg-risk" />
+            <dt className="text-[13px] text-ink-soft">Overdue</dt>
+            <dd className={cn("tabular ml-auto text-[14px] font-semibold", overdue ? "text-risk" : "text-ink")}>{overdue}</dd>
+          </div>
+        </dl>
+      </div>
+    </Panel>
+  )
+}
+
+function NeedsAttention({ overdue, soon }: { overdue: Task[]; soon: Task[] }) {
+  const items = [...overdue.map((t) => ({ t, late: true })), ...soon.map((t) => ({ t, late: false }))].slice(0, 6)
+  return (
+    <Panel>
+      <PanelHeader title="Coming up" />
+      {items.length === 0 ? (
+        <p className="px-4 py-5 text-sm text-ink-soft sm:px-5">Nothing overdue and nothing due in the next two days.</p>
+      ) : (
+        <ul className="divide-y divide-rule">
+          {items.map(({ t, late }) => (
+            <li key={t.id} className="flex items-start gap-3 px-4 py-3 sm:px-5">
+              <span className="pt-1">
+                <PriorityMark priority={t.priority} />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[14px] font-medium text-ink">{t.title}</p>
+                <p className={cn("text-[13px]", late ? "text-risk" : "text-ink-soft")}>
+                  {late ? "Overdue, was due " : "Due "}
+                  {relative(t.due_date)}
+                </p>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Panel>
+  )
+}
+
+/* ── Page ────────────────────────────────────────────────── */
 
 export default function DashboardPage() {
   const { user } = useAuth()
   const [tasks, setTasks] = useState<Task[]>([])
   const [loading, setLoading] = useState(true)
+  const now = useNow()
 
   useEffect(() => {
     if (!user) return
@@ -65,179 +221,71 @@ export default function DashboardPage() {
       .finally(() => setLoading(false))
   }, [user])
 
-  const pending = tasks.filter((t) => t.status === "pending")
-  const inProgress = tasks.filter((t) => t.status === "in_progress")
-  const completed = tasks.filter((t) => t.status === "completed")
-  const overdue = pending.filter(
-    (t) => t.due_date && new Date(t.due_date) < new Date()
-  )
-  const dueSoon = pending
-    .filter((t) => {
-      if (!t.due_date) return false
-      const h = (new Date(t.due_date).getTime() - Date.now()) / 36e5
-      return h > 0 && h <= 48
+  const { today, overdue, soon, plannedHours, openToday } = useMemo(() => {
+    const active = tasks.filter((t) => t.status !== "cancelled")
+    const today = active.filter((t) => {
+      const d = parseDate(t.due_date)
+      return d && isSameDay(d, now)
     })
-    .sort((a, b) => new Date(a.due_date!).getTime() - new Date(b.due_date!).getTime())
+    const openToday = today.filter((t) => t.status !== "completed")
+    const overdue = active
+      .filter((t) => isOverdue(t) && !today.includes(t))
+      .sort((a, b) => (PRIORITY_WEIGHT[a.priority] ?? 2) - (PRIORITY_WEIGHT[b.priority] ?? 2))
+    const soon = active
+      .filter((t) => {
+        if (t.status === "completed" || today.includes(t)) return false
+        const d = parseDate(t.due_date)
+        if (!d) return false
+        const h = (d.getTime() - now.getTime()) / 36e5
+        return h > 0 && h <= 48
+      })
+      .sort((a, b) => parseDate(a.due_date)!.getTime() - parseDate(b.due_date)!.getTime())
+    const plannedHours = openToday.reduce((s, t) => s + (t.estimated_hours ?? 0), 0)
+    return { today, overdue, soon, plannedHours, openToday }
+  }, [tasks, now])
 
-  const hour = new Date().getHours()
-  const greeting =
-    hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening"
+  const hour = now.getHours()
+  const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening"
+  const firstName = user?.name?.split(" ")[0]
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-24">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-      </div>
-    )
-  }
+  if (loading) return <Spinner label="Loading your day" />
+
+  const summary =
+    openToday.length === 0
+      ? "Nothing left due today."
+      : `${openToday.length} task${openToday.length === 1 ? "" : "s"} left today${plannedHours > 0 ? `, about ${hoursLabel(plannedHours)} of work` : ""}.`
 
   return (
-    <div className="space-y-8 animate-fade-in">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+    <div>
+      <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-4 pb-8">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">
-            {greeting}, {user?.name || "there"} 👋
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            {pending.length > 0
-              ? `You have ${pending.length} pending task${pending.length !== 1 ? "s" : ""}.`
-              : "All caught up! No pending tasks."}
+          <p className="text-[15px] text-ink-soft">
+            {greeting}
+            {firstName ? `, ${firstName}` : ""}
           </p>
+          <h1 className="font-display mt-1 text-[34px] leading-[1.05] font-semibold text-ink sm:text-[44px]">
+            {format(now, "EEEE")}
+            <span className="text-ink-faint">, {format(now, "d MMMM")}</span>
+          </h1>
+          <p className="mt-2 text-[15px] text-ink">{summary}</p>
         </div>
-        <Link
-          to="/tasks?new=1"
-          className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:opacity-90 transition-opacity"
-        >
-          <Plus className="h-4 w-4" />
-          New Task
-        </Link>
-      </div>
-
-      {/* Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
-          label="Pending"
-          value={pending.length}
-          icon={<Clock className="h-5 w-5 text-blue-600 dark:text-blue-400" />}
-          color="bg-blue-500/10"
-        />
-        <StatCard
-          label="In Progress"
-          value={inProgress.length}
-          icon={<TrendingUp className="h-5 w-5 text-violet-600 dark:text-violet-400" />}
-          color="bg-violet-500/10"
-        />
-        <StatCard
-          label="Completed"
-          value={completed.length}
-          icon={<CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />}
-          color="bg-emerald-500/10"
-          trend={tasks.length > 0 ? `${Math.round((completed.length / tasks.length) * 100)}% done` : undefined}
-        />
-        <StatCard
-          label="Overdue"
-          value={overdue.length}
-          icon={<AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400" />}
-          color="bg-red-500/10"
-        />
-      </div>
-
-      {/* Content Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Urgent Tasks */}
-        <div className="lg:col-span-2 rounded-xl border border-border bg-card">
-          <div className="flex items-center justify-between border-b border-border px-5 py-4">
-            <h2 className="font-semibold text-foreground">Priority Tasks</h2>
-            <Link to="/tasks" className="text-sm text-primary hover:underline flex items-center gap-1">
-              View all <ArrowRight className="h-3 w-3" />
-            </Link>
-          </div>
-          <div className="divide-y divide-border">
-            {pending.length === 0 && (
-              <p className="px-5 py-8 text-center text-muted-foreground text-sm">
-                No pending tasks — create one to get started!
-              </p>
-            )}
-            {pending.slice(0, 6).map((task) => (
-              <div key={task.id} className="flex items-center gap-4 px-5 py-3.5 hover:bg-muted/40 transition-colors">
-                <div className={cn("h-2.5 w-2.5 rounded-full flex-shrink-0", priorityColors[task.priority] || "bg-zinc-400")} />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-foreground truncate">{task.title}</p>
-                  {task.due_date && (
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      Due {formatDistanceToNow(new Date(task.due_date), { addSuffix: true })}
-                    </p>
-                  )}
-                </div>
-                <span className="text-[11px] uppercase tracking-wide text-muted-foreground font-medium">
-                  {task.priority}
-                </span>
-              </div>
-            ))}
-          </div>
+        <div className="flex items-center gap-2">
+          <Link to="/chat?trigger=morning_brief" className={buttonClass("secondary", "md")}>
+            <Sunrise className="h-4 w-4" />
+            Get my brief
+          </Link>
+          <Link to="/tasks?new=1" className={buttonClass("primary", "md")}>
+            <Plus className="h-4 w-4" />
+            New task
+          </Link>
         </div>
+      </header>
 
-        {/* Quick Actions + Alerts */}
-        <div className="space-y-4">
-          <div className="rounded-xl border border-border bg-card">
-            <div className="border-b border-border px-5 py-4">
-              <h2 className="font-semibold text-foreground">Quick Actions</h2>
-            </div>
-            <div className="p-4 space-y-2">
-              <Link
-                to="/tasks?new=1"
-                className="flex items-center gap-3 rounded-lg px-4 py-3 text-sm text-foreground hover:bg-muted transition-colors"
-              >
-                <Plus className="h-4 w-4 text-primary" />
-                Create a task
-              </Link>
-              <Link
-                to="/chat"
-                className="flex items-center gap-3 rounded-lg px-4 py-3 text-sm text-foreground hover:bg-muted transition-colors"
-              >
-                <MessageSquare className="h-4 w-4 text-primary" />
-                Talk to TaskFlow
-              </Link>
-              <Link
-                to="/chat?trigger=morning_brief"
-                className="flex items-center gap-3 rounded-lg px-4 py-3 text-sm text-foreground hover:bg-muted transition-colors"
-              >
-                <TrendingUp className="h-4 w-4 text-primary" />
-                Get morning brief
-              </Link>
-            </div>
-          </div>
-
-          {/* Overdue Warning */}
-          {overdue.length > 0 && (
-            <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-5">
-              <div className="flex items-center gap-2 text-red-500 text-sm font-medium mb-3">
-                <AlertTriangle className="h-4 w-4" />
-                {overdue.length} Overdue Task{overdue.length !== 1 ? "s" : ""}
-              </div>
-              {overdue.slice(0, 3).map((t) => (
-                <p key={t.id} className="text-xs text-muted-foreground truncate pl-6 mt-1">
-                  • {t.title}
-                </p>
-              ))}
-            </div>
-          )}
-
-          {/* Due Soon */}
-          {dueSoon.length > 0 && (
-            <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-5">
-              <div className="flex items-center gap-2 text-amber-500 text-sm font-medium mb-3">
-                <Clock className="h-4 w-4" />
-                {dueSoon.length} Due Soon
-              </div>
-              {dueSoon.slice(0, 3).map((t) => (
-                <p key={t.id} className="text-xs text-muted-foreground truncate pl-6 mt-1">
-                  • {t.title}
-                </p>
-              ))}
-            </div>
-          )}
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <TodaySheet tasks={today} now={now} />
+        <div className="space-y-6">
+          <NeedsAttention overdue={overdue} soon={soon} />
+          <StatusBreakdown tasks={tasks} />
         </div>
       </div>
     </div>
