@@ -52,12 +52,16 @@ export const profileCreateSchema = z.object({
 export type ProfileCreateInput = z.infer<typeof profileCreateSchema>
 
 export const profileUpdateSchema = z.object({
-  name: z.string().min(1).optional(),
-  email: z.string().email().optional(),
+  name: z.string().trim().min(1, "Enter your name.").max(100).optional(),
+  email: z.string().optional(),
   timezone: z.string().optional(),
   work_hours: z.object({ start: z.number(), end: z.number() }).optional(),
   notification_channels: z.object({ primary: z.string(), secondary: z.string() }).optional(),
-  telegram_chat_id: z.string().optional(),
+  telegram_chat_id: z
+    .string()
+    .trim()
+    .regex(/^-?\d*$/, "A chat ID is digits only, e.g. 6941167090.")
+    .optional(),
   brief_time: z.string().optional(),
 })
 
@@ -113,7 +117,6 @@ export const agentPreferencesSchema = z.object({
   dnd_end: z.string().regex(/^\d{2}:\d{2}$/),
   morning_brief_time: z.string().regex(/^\d{2}:\d{2}$/),
   custom_agent_instructions: z.string().max(1000).optional(),
-  telegram_chat_id: z.string().optional(),
   telegram_notifications_enabled: z.boolean(),
   enable_morning_brief: z.boolean(),
   enable_evening_debrief: z.boolean(),

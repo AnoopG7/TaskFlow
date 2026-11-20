@@ -89,14 +89,36 @@ def is_connected() -> bool:
 # PROFILE OPERATIONS
 # ─────────────────────────────────────────────────────────────────
 
+def _hhmm(value):
+    """Postgres TIME columns come back as 'HH:MM:SS'; the app works in 'HH:MM'."""
+    if isinstance(value, str) and len(value) >= 5 and value[2] == ":":
+        return value[:5]
+    return value
+
+
+def _normalize_times(row: dict | None, keys: tuple[str, ...]) -> dict | None:
+    if not row:
+        return row
+    for k in keys:
+        if k in row:
+            row[k] = _hhmm(row[k])
+    return row
+
+
 async def get_user_profile(user_id: str):
-    """Get user profile by user_id."""
-    client = get_supabase_anon()
+    """Get user profile by user_id.
+
+    Uses the service client with an explicit user_id filter: the shared anon
+    client carries whichever session last signed in, so RLS can hide rows.
+    """
+    client = get_supabase_service()
 
     if is_connected() and client:
         try:
-            result = client.table("user_profiles").select("*").eq("user_id", user_id).maybe_single().execute()
-            return result.data if result.data else None
+            result = client.table("user_profiles").select("*").eq("user_id", user_id).limit(1).execute()
+            if result.data:
+                return _normalize_times(result.data[0], ("brief_time",))
+            return None
         except Exception as e:
             logger.warning(f"get_user_profile error: {e}")
 
@@ -104,8 +126,8 @@ async def get_user_profile(user_id: str):
 
 
 async def get_all_users() -> list[dict]:
-    """Get all user profiles."""
-    client = get_supabase_anon()
+    """Get all user profiles (service client: used by the scheduler at startup)."""
+    client = get_supabase_service()
 
     if is_connected() and client:
         try:
@@ -117,17 +139,23 @@ async def get_all_users() -> list[dict]:
     return list(_profiles.values())
 
 
-async def upsert_user_profile(profile: dict):
-    """Create or update user profile."""
+async def upsert_user_profile(profile: dict, strict: bool = False):
+    """Create or update user profile.
+
+    With strict=True a database failure is raised instead of silently falling
+    back to the in-memory store, so API callers can report it.
+    """
     client = get_supabase_service()
     profile["updated_at"] = _now_iso()
 
     if is_connected() and client:
         try:
             result = client.table("user_profiles").upsert(profile, on_conflict="user_id").execute()
-            return result.data[0] if result.data else None
+            return _normalize_times(result.data[0], ("brief_time",)) if result.data else None
         except Exception as e:
             logger.warning(f"upsert_user_profile error: {e}")
+            if strict:
+                raise
 
     _profiles[profile["user_id"]] = profile
     return profile
@@ -740,23 +768,26 @@ _AGENT_PREF_DEFAULTS = {
 }
 
 
+_PREF_TIME_KEYS = ("dnd_start", "dnd_end", "morning_brief_time")
+
+
 async def get_agent_preferences(user_id: str) -> dict:
     """Get agent preferences with defaults fallback."""
-    client = get_supabase_anon()
+    client = get_supabase_service()
 
     if is_connected() and client:
         try:
-            result = client.table("agent_preferences").select("*").eq("user_id", user_id).maybe_single().execute()
+            result = client.table("agent_preferences").select("*").eq("user_id", user_id).limit(1).execute()
             if result.data:
-                return result.data
+                return _normalize_times({**_AGENT_PREF_DEFAULTS, **result.data[0]}, _PREF_TIME_KEYS)
         except Exception as e:
             logger.warning(f"get_agent_preferences error: {e}")
 
     return {"user_id": user_id, **_AGENT_PREF_DEFAULTS}
 
 
-async def update_agent_preferences(user_id: str, updates: dict) -> dict:
-    """Upsert agent preferences."""
+async def update_agent_preferences(user_id: str, updates: dict, strict: bool = False) -> dict:
+    """Upsert agent preferences. strict=True raises on database failure."""
     client = get_supabase_service()
 
     if is_connected() and client:
@@ -765,16 +796,21 @@ async def update_agent_preferences(user_id: str, updates: dict) -> dict:
             updates["updated_at"] = _now_iso()
             result = client.table("agent_preferences").upsert(updates, on_conflict="user_id").execute()
             if result.data:
-                return result.data[0] if isinstance(result.data, list) else result.data
+                row = result.data[0] if isinstance(result.data, list) else result.data
+                return _normalize_times({**_AGENT_PREF_DEFAULTS, **row}, _PREF_TIME_KEYS)
         except Exception as e:
             logger.error(f"update_agent_preferences error: {e}")
+            if strict:
+                raise
 
-    return {"user_id": user_id, **updates}
+    return {"user_id": user_id, **_AGENT_PREF_DEFAULTS, **updates}
 
 
 async def reset_agent_preferences(user_id: str) -> dict:
-    """Reset agent preferences to defaults."""
-    return await update_agent_preferences(user_id, {**_AGENT_PREF_DEFAULTS})
+    """Reset agent preferences to defaults, keeping the linked Telegram chat."""
+    current = await get_agent_preferences(user_id)
+    defaults = {**_AGENT_PREF_DEFAULTS, "telegram_chat_id": current.get("telegram_chat_id")}
+    return await update_agent_preferences(user_id, defaults, strict=True)
 
 
 # ─────────────────────────────────────────────────────────────────

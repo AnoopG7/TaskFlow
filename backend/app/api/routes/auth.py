@@ -241,22 +241,86 @@ async def login(req: LoginRequest):
 # ─── Profile CRUD ─────────────────────────────────────────────
 
 
+def _default_profile(user_id: str) -> dict:
+    """Build a profile from the Supabase auth user (used when the row is missing)."""
+    name, email = "", None
+    try:
+        admin = get_supabase_service()
+        if admin:
+            auth_user = admin.auth.admin.get_user_by_id(user_id).user
+            if auth_user:
+                email = auth_user.email
+                meta = auth_user.user_metadata or {}
+                name = meta.get("name") or (email.split("@")[0] if email else "")
+    except Exception as e:
+        logger.warning("Could not read auth user %s: %s", user_id, e)
+    return {
+        "user_id": user_id,
+        "name": name or "User",
+        "email": email,
+        "timezone": "IST",
+        "work_hours": {"start": 9, "end": 17},
+        "notification_channels": {"primary": "telegram", "secondary": "email"},
+        "brief_time": "07:00",
+    }
+
+
 @router.get("/profile")
 async def get_profile(x_user_id: str = Header(..., alias="X-User-ID")):
-    """Get user profile."""
-    from app.services.supabase_service import get_user_profile
+    """Get the user's profile, creating it from the auth account if it's missing."""
+    from app.services.supabase_service import get_user_profile, upsert_user_profile
+
     profile = await get_user_profile(x_user_id)
-    if not profile:
+    if profile:
+        return profile
+
+    logger.info("No profile row for %s, creating one from the auth account", x_user_id)
+    try:
+        created = await upsert_user_profile(_default_profile(x_user_id), strict=True)
+    except Exception as e:
+        logger.error("Profile self-heal failed for %s: %s", x_user_id, e)
+        raise HTTPException(status_code=500, detail="Couldn't load your profile")
+    if not created:
         raise HTTPException(status_code=404, detail="Profile not found")
-    return profile
+    return created
 
 
 @router.post("/profile")
-async def create_or_update_profile(profile: ProfileCreate):
-    """Create or update user profile."""
-    from app.services.supabase_service import upsert_user_profile
-    result = await upsert_user_profile(profile.model_dump())
-    return result
+async def create_or_update_profile(
+    profile: ProfileUpdate,
+    x_user_id: str = Header(..., alias="X-User-ID"),
+):
+    """Update the signed-in user's profile. The user is taken from the header, never the body."""
+    from app.services.supabase_service import (
+        get_user_profile,
+        upsert_user_profile,
+        update_agent_preferences,
+    )
+
+    updates = profile.model_dump(exclude_unset=True)
+    updates.pop("email", None)  # email belongs to the auth account
+    if "telegram_chat_id" in updates:
+        updates["telegram_chat_id"] = (updates["telegram_chat_id"] or "").strip() or None
+
+    existing = await get_user_profile(x_user_id) or _default_profile(x_user_id)
+    merged = {**existing, **updates, "user_id": x_user_id}
+    for k in ("id", "created_at"):
+        merged.pop(k, None)
+
+    try:
+        result = await upsert_user_profile(merged, strict=True)
+    except Exception as e:
+        logger.error("Profile update failed for %s: %s", x_user_id, e)
+        raise HTTPException(status_code=500, detail="Couldn't save your profile")
+
+    # The scheduler reads the chat ID from agent_preferences; keep both in sync.
+    if "telegram_chat_id" in updates:
+        try:
+            await update_agent_preferences(x_user_id, {"telegram_chat_id": updates["telegram_chat_id"]}, strict=True)
+        except Exception as e:
+            logger.warning("Telegram chat ID sync to preferences failed for %s: %s", x_user_id, e)
+
+    return result or merged
 
 
 
@@ -303,7 +367,7 @@ async def update_agent_preferences_endpoint(prefs: AgentPreferencesUpdate, x_use
     from app.services.supabase_service import update_agent_preferences
     try:
         updates = {k: v for k, v in prefs.model_dump().items() if v is not None}
-        result = await update_agent_preferences(x_user_id, updates)
+        result = await update_agent_preferences(x_user_id, updates, strict=True)
         logger.info(f"✅ Agent preferences updated for user {x_user_id}")
         return result
     except Exception as e:

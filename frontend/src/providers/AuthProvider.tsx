@@ -12,6 +12,7 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<void>
   signup: (email: string, password: string, name: string) => Promise<SignupResponse>
   logout: () => void
+  updateUser: (patch: Partial<AuthResponse>) => void
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -86,6 +87,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem("tf-auth-token")
   }, [])
 
+  const updateUser = useCallback((patch: Partial<AuthResponse>) => {
+    setUser((prev) => {
+      if (!prev) return prev
+      const next = { ...prev, ...patch }
+      localStorage.setItem("tf-auth-user", JSON.stringify(next))
+      return next
+    })
+  }, [])
+
   return (
     <AuthContext.Provider
       value={{
@@ -96,6 +106,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         login,
         signup,
         logout,
+        updateUser,
       }}
     >
       {children}

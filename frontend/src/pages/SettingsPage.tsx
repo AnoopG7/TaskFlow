@@ -45,17 +45,45 @@ function SaveBar({ dirty, saving, label }: { dirty: boolean; saving: boolean; la
   )
 }
 
+const hhmm = (v: string | null | undefined, fallback: string) => (v ? v.slice(0, 5) : fallback)
+
+function toAgentForm(p: AgentPreferences): AgentPreferencesInput {
+  return {
+    notification_enabled: p.notification_enabled ?? true,
+    dnd_enabled: p.dnd_enabled ?? false,
+    dnd_start: hhmm(p.dnd_start, "20:00"),
+    dnd_end: hhmm(p.dnd_end, "08:00"),
+    morning_brief_time: hhmm(p.morning_brief_time, "07:00"),
+    custom_agent_instructions: p.custom_agent_instructions ?? "",
+    telegram_notifications_enabled: p.telegram_notifications_enabled ?? true,
+    enable_morning_brief: p.enable_morning_brief ?? true,
+    enable_evening_debrief: p.enable_evening_debrief ?? true,
+    enable_risk_detection: p.enable_risk_detection ?? true,
+    enable_overload_warnings: p.enable_overload_warnings ?? true,
+  }
+}
+
+function toProfileForm(p: UserProfile): ProfileUpdateInput {
+  return {
+    name: p.name ?? "",
+    timezone: p.timezone ?? "IST",
+    telegram_chat_id: p.telegram_chat_id ?? "",
+  }
+}
+
 export default function SettingsPage() {
-  const { user } = useAuth()
+  const { user, updateUser } = useAuth()
   const { theme, setTheme } = useTheme()
   const { showBanner } = useBanner()
   const [loading, setLoading] = useState(true)
-  const [, setProfile] = useState<UserProfile | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [reloadKey, setReloadKey] = useState(0)
+  const [profile, setProfile] = useState<UserProfile | null>(null)
   const [agentPrefs, setAgentPrefs] = useState<AgentPreferences | null>(null)
   const [resettingPrefs, setResettingPrefs] = useState(false)
   const [confirmReset, setConfirmReset] = useState(false)
 
-  // Profile form
+  // Profile form (email is shown read-only and never submitted)
   const {
     register: registerProfile,
     handleSubmit: handleProfileSubmit,
@@ -78,52 +106,59 @@ export default function SettingsPage() {
 
   const dndEnabled = watchAgent("dnd_enabled")
 
-  // Load both profile and preferences
+  // Load profile and preferences independently so one failing doesn't blank the page
   useEffect(() => {
     if (!user) return
+    let cancelled = false
+
+    Promise.allSettled([api.getProfile(), api.getAgentPreferences()]).then(([profileRes, prefsRes]) => {
+      if (cancelled) return
+      const failed: string[] = []
+
+      if (profileRes.status === "fulfilled") {
+        setProfile(profileRes.value)
+        resetProfile(toProfileForm(profileRes.value))
+      } else {
+        failed.push("profile")
+      }
+
+      if (prefsRes.status === "fulfilled") {
+        setAgentPrefs(prefsRes.value)
+        resetAgent(toAgentForm(prefsRes.value))
+      } else {
+        failed.push("assistant settings")
+      }
+
+      setLoadError(failed.length ? `Couldn't load your ${failed.join(" and ")}.` : null)
+      setLoading(false)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [user, resetProfile, resetAgent, reloadKey])
+
+  const retryLoad = () => {
     setLoading(true)
+    setReloadKey((k) => k + 1)
+  }
 
-    Promise.all([api.getProfile(), api.getAgentPreferences()])
-      .then(([profileRes, prefsRes]) => {
-        setProfile(profileRes)
-        setAgentPrefs(prefsRes)
-
-        resetProfile({
-          name: profileRes.name,
-          email: profileRes.email ?? "",
-          timezone: profileRes.timezone,
-          work_hours: profileRes.work_hours,
-          brief_time: profileRes.brief_time ?? "07:00",
-          telegram_chat_id: profileRes.telegram_chat_id ?? "",
-        })
-
-        resetAgent({
-          notification_enabled: prefsRes.notification_enabled ?? true,
-          dnd_enabled: prefsRes.dnd_enabled ?? false,
-          dnd_start: prefsRes.dnd_start ?? "20:00",
-          dnd_end: prefsRes.dnd_end ?? "08:00",
-          morning_brief_time: prefsRes.morning_brief_time ?? "07:00",
-          custom_agent_instructions: prefsRes.custom_agent_instructions ?? "",
-          telegram_chat_id: prefsRes.telegram_chat_id ?? "",
-          telegram_notifications_enabled: prefsRes.telegram_notifications_enabled ?? true,
-          enable_morning_brief: prefsRes.enable_morning_brief ?? true,
-          enable_evening_debrief: prefsRes.enable_evening_debrief ?? true,
-          enable_risk_detection: prefsRes.enable_risk_detection ?? true,
-          enable_overload_warnings: prefsRes.enable_overload_warnings ?? true,
-        })
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false))
-  }, [user, resetProfile, resetAgent])
+  const onInvalid = () => showBanner("error", "Check the highlighted fields.")
 
   const onProfileSubmit = async (data: ProfileUpdateInput) => {
     if (!user) return
     try {
-      const result = await api.createOrUpdateProfile({ ...data, user_id: user.user_id })
+      const result = await api.createOrUpdateProfile({
+        name: data.name?.trim(),
+        timezone: data.timezone,
+        telegram_chat_id: data.telegram_chat_id?.trim() ?? "",
+      })
       setProfile(result)
+      resetProfile(toProfileForm(result))
+      if (result.name && result.name !== user.name) updateUser({ name: result.name })
       showBanner("success", "Profile saved")
     } catch {
-      showBanner("error", "Couldn't save your profile.")
+      showBanner("error", "Couldn't save your profile. Try again in a moment.")
     }
   }
 
@@ -132,9 +167,10 @@ export default function SettingsPage() {
     try {
       const result = await api.updateAgentPreferences(data)
       setAgentPrefs(result)
+      resetAgent(toAgentForm(result))
       showBanner("success", "Assistant settings saved")
     } catch {
-      showBanner("error", "Couldn't save assistant settings.")
+      showBanner("error", "Couldn't save assistant settings. Try again in a moment.")
     }
   }
 
@@ -143,8 +179,8 @@ export default function SettingsPage() {
     setResettingPrefs(true)
     try {
       const result = await api.resetAgentPreferences()
-      resetAgent(result as AgentPreferencesInput)
       setAgentPrefs(result)
+      resetAgent(toAgentForm(result))
       showBanner("success", "Assistant settings reset")
     } catch {
       showBanner("error", "Couldn't reset assistant settings.")
@@ -153,21 +189,31 @@ export default function SettingsPage() {
       setConfirmReset(false)
     }
   }
+
   if (loading) return <Spinner label="Loading settings" />
 
   return (
     <div className="space-y-8">
       <PageHeader title="Settings" description="Your profile, how the assistant reaches you, and how it works." />
 
-      <form onSubmit={handleProfileSubmit(onProfileSubmit)}>
+      {loadError && (
+        <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-risk/25 bg-risk-wash px-4 py-3 text-sm text-risk">
+          {loadError}
+          <Button size="sm" onClick={retryLoad}>
+            Try again
+          </Button>
+        </div>
+      )}
+
+      <form onSubmit={handleProfileSubmit(onProfileSubmit, onInvalid)}>
         <Panel className="overflow-hidden">
           <div className="divide-y divide-rule">
             <Section title="Profile" description="Your timezone sets when briefings arrive and how due times are read.">
               <Field label="Name" htmlFor="s-name" error={profileErrors.name?.message}>
-                <Input id="s-name" {...registerProfile("name")} />
+                <Input id="s-name" autoComplete="name" {...registerProfile("name")} invalid={!!profileErrors.name} />
               </Field>
               <Field label="Email" htmlFor="s-email" hint="Your sign-in email. It can't be changed here.">
-                <Input id="s-email" {...registerProfile("email")} type="email" disabled />
+                <Input id="s-email" type="email" value={profile?.email ?? ""} placeholder="Not available" readOnly disabled />
               </Field>
               <Field label="Timezone" htmlFor="s-tz">
                 <Select id="s-tz" {...registerProfile("timezone")}>
@@ -186,7 +232,7 @@ export default function SettingsPage() {
               title="Telegram"
               description="Link Telegram to add tasks, mark them done and get check-ins from your phone."
             >
-              <Field label="Telegram chat ID" htmlFor="s-tg">
+              <Field label="Telegram chat ID" htmlFor="s-tg" error={profileErrors.telegram_chat_id?.message}>
                 <Input id="s-tg" {...registerProfile("telegram_chat_id")} inputMode="numeric" placeholder="e.g. 6941167090" className="tabular" />
               </Field>
               <div className="rounded-md bg-wash/70 p-4">
@@ -235,7 +281,7 @@ export default function SettingsPage() {
       </Panel>
 
       {agentPrefs && (
-        <form onSubmit={handleAgentSubmit(onAgentSubmit)}>
+        <form onSubmit={handleAgentSubmit(onAgentSubmit, onInvalid)}>
           <Panel className="overflow-hidden">
             <div className="divide-y divide-rule">
               <Section title="Notifications" description="When and where the assistant checks in with you.">
@@ -245,7 +291,7 @@ export default function SettingsPage() {
                 <ToggleRow title="Deliver on Telegram" description="Needs a linked chat ID.">
                   <Switch {...registerAgent("telegram_notifications_enabled")} />
                 </ToggleRow>
-                <Field label="Morning brief at" htmlFor="s-brief">
+                <Field label="Morning brief at" htmlFor="s-brief" error={agentErrors.morning_brief_time && "Use a time like 07:30."}>
                   <Input id="s-brief" {...registerAgent("morning_brief_time")} type="time" className="tabular w-40" />
                 </Field>
               </Section>
@@ -256,10 +302,10 @@ export default function SettingsPage() {
                 </ToggleRow>
                 {dndEnabled && (
                   <div className="grid grid-cols-2 gap-4 sm:max-w-sm">
-                    <Field label="From" htmlFor="s-dnd-start">
+                    <Field label="From" htmlFor="s-dnd-start" error={agentErrors.dnd_start && "Use a time like 21:00."}>
                       <Input id="s-dnd-start" {...registerAgent("dnd_start")} type="time" className="tabular" />
                     </Field>
-                    <Field label="Until" htmlFor="s-dnd-end">
+                    <Field label="Until" htmlFor="s-dnd-end" error={agentErrors.dnd_end && "Use a time like 08:00."}>
                       <Input id="s-dnd-end" {...registerAgent("dnd_end")} type="time" className="tabular" />
                     </Field>
                   </div>
